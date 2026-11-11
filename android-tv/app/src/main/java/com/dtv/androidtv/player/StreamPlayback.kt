@@ -21,18 +21,17 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.TimeUnit
 
 /**
  * Media3 playback helper for Douyu FLV (+ test HLS).
  *
- * Douyu path notes (Slice-1):
- * - getH5PlayV1 returns progressive **FLV** (not HLS). Media3 plays it via
- *   [ProgressiveMediaSource] + built-in FlvExtractor — no FFmpeg extension required.
- * - CDN links often carry `expire=300&fcdn=ws`. We keep Go's `expire=0` patch and
- *   additionally **re-sign** (~240s) by re-calling stream resolve and swapping the
- *   MediaItem. Full local FLV splice-relay (desktop StreamRelayService) is deferred;
- *   re-sign + error retry is the practical continuous-watch path here.
+ * FLV path: ProgressiveMediaSource + FlvExtractor.
+ * Stability (M3 polish, still no full splice-relay):
+ * - `expire=0` patch for ws CDN 300s links
+ * - scheduled re-sign ~240s
+ * - on error: backoff retries with fresh URL before surfacing UI error
  */
 @UnstableApi
 class StreamPlayback(
@@ -43,7 +42,7 @@ class StreamPlayback(
     private val appContext = context.applicationContext
 
     private val okHttp: OkHttpClient = HttpJsonClient.defaultClient().newBuilder()
-        .readTimeout(0, TimeUnit.MILLISECONDS) // live streams are long-lived
+        .readTimeout(0, TimeUnit.MILLISECONDS)
         .build()
 
     private val httpFactory = OkHttpDataSource.Factory(okHttp)
@@ -54,25 +53,32 @@ class StreamPlayback(
         .build()
 
     private var renewJob: Job? = null
+    private var retryJob: Job? = null
     private var roomId: String = ""
     private var quality: String = ""
     private var line: String = ""
     private var format: String = "flv"
+    private val consecutiveErrors = AtomicInteger(0)
 
     var onError: ((String) -> Unit)? = null
     var onPlaying: (() -> Unit)? = null
+    var onIsPlayingChanged: ((Boolean) -> Unit)? = null
 
     init {
         player.addListener(object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
-                onError?.invoke(error.message ?: error.errorCodeName)
-                scope.launch { retryWithFreshUrl("playback_error") }
+                scope.launch { handlePlaybackError(error) }
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_READY) {
+                    consecutiveErrors.set(0)
                     onPlaying?.invoke()
                 }
+            }
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                onIsPlayingChanged?.invoke(isPlaying)
             }
         })
     }
@@ -88,6 +94,7 @@ class StreamPlayback(
         this.quality = quality
         this.line = line
         this.format = format
+        consecutiveErrors.set(0)
         setMedia(url, format, roomId)
         startRenewLoop()
     }
@@ -98,18 +105,21 @@ class StreamPlayback(
         line = ""
         format = "hls"
         renewJob?.cancel()
+        retryJob?.cancel()
+        consecutiveErrors.set(0)
         setMedia(DouyuConstants.TEST_HLS_URL, "hls", roomId = "")
     }
 
     fun release() {
         renewJob?.cancel()
+        retryJob?.cancel()
         player.release()
     }
 
     private fun setMedia(url: String, format: String, roomId: String) {
         val headers = mutableMapOf(
             "User-Agent" to DouyuConstants.DESKTOP_UA,
-            "Accept" to "*/*",
+            "Accept" to "video/x-flv,application/octet-stream,*/*",
             "Connection" to "keep-alive",
         )
         if (roomId.isNotBlank()) {
@@ -125,7 +135,6 @@ class StreamPlayback(
                 HlsMediaSource.Factory(httpFactory).createMediaSource(itemBuilder.build())
             }
             else -> {
-                // FLV progressive — Media3 FlvExtractor handles Douyu live FLV.
                 itemBuilder.setMimeType(MimeTypes.VIDEO_FLV)
                 ProgressiveMediaSource.Factory(httpFactory)
                     .createMediaSource(itemBuilder.build())
@@ -137,33 +146,50 @@ class StreamPlayback(
         player.videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT
     }
 
-    /**
-     * Re-resolve before the typical ~300s CDN cut. Swap MediaItem without leaving
-     * the player screen; on failure surface error for UI retry.
-     */
     private fun startRenewLoop() {
         renewJob?.cancel()
         if (format.equals("hls", true) || roomId == "test") return
         renewJob = scope.launch {
             while (isActive) {
                 delay(RENEW_INTERVAL_MS)
-                retryWithFreshUrl("scheduled_resign")
+                // Quiet re-sign: failures do not wipe the current buffer until retries exhaust.
+                retryWithFreshUrl(reason = "scheduled_resign", surfaceError = false)
             }
         }
     }
 
-    private suspend fun retryWithFreshUrl(reason: String) {
+    private suspend fun handlePlaybackError(error: PlaybackException) {
+        if (roomId.isBlank() || roomId == "test") {
+            onError?.invoke(error.message ?: error.errorCodeName)
+            return
+        }
+        val attempt = consecutiveErrors.incrementAndGet()
+        if (attempt <= MAX_ERROR_RETRIES) {
+            delay(RETRY_BACKOFF_MS * attempt)
+            retryWithFreshUrl(reason = "playback_error_$attempt", surfaceError = false)
+            return
+        }
+        onError?.invoke(error.message ?: error.errorCodeName)
+    }
+
+    private suspend fun retryWithFreshUrl(reason: String, surfaceError: Boolean) {
         if (roomId.isBlank() || roomId == "test") return
         try {
             val fresh = resolveUrl(quality, line)
             setMedia(fresh, format, roomId)
+            consecutiveErrors.set(0)
         } catch (e: Exception) {
-            onError?.invoke("续流失败($reason): ${e.message}")
+            if (surfaceError) {
+                onError?.invoke("续流失败($reason): ${e.message}")
+            }
+            // Scheduled resign: leave current segment playing; next tick retries.
         }
     }
 
     companion object {
         /** Leave ~60s margin under Douyu's common 300s anonymous cut. */
         const val RENEW_INTERVAL_MS = 240_000L
+        const val MAX_ERROR_RETRIES = 3
+        const val RETRY_BACKOFF_MS = 1_200L
     }
 }

@@ -1,4 +1,4 @@
-# DTV Android TV（Slice-1 · 斗鱼）
+# DTV Android TV（Slice-1 + M3 · 斗鱼）
 
 本目录是 LIVE-TV 在本 fork 下的 **Android TV 原生客户端**（Compose for TV + Media3），
 Kotlin 契约移植桌面端 `DtvApi` / `common` 与 Go `internal/platforms/douyu`。
@@ -6,10 +6,10 @@ Kotlin 契约移植桌面端 `DtvApi` / `common` 与 Go `internal/platforms/douy
 
 ## 范围（已实现）
 
-- Android TV / Leanback launcher、DPAD 友好分区浏览 → 选房间 → 全屏播放
-- Media3 播放：斗鱼 FLV（Progressive + 内置 FlvExtractor）+ 测试 HLS 兜底
-- 斗鱼：分区列表、直播间列表、`getH5PlayV1` 取流；`expire=0` 补丁 + ~240s 重签续流
-- 错误态重试、系统 Back 返回浏览
+- Android TV / Leanback launcher、DPAD 友好浏览 → 选房间 → 全屏播放
+- **M3 首页行**：关注 / 最近观看（本地 SharedPreferences）+ 分区直播行；行内 `focusRestorer` 焦点记忆；overscan safe padding
+- 播放页 chrome：OK 显控 / 播放暂停、关注切换、Back 退出；未开播 / 错误可读 + 重试
+- Media3：斗鱼 FLV + 测试 HLS；`expire=0` + ~240s 重签；错误退避重试（无完整 splice 中继）
 
 ## 明确延后
 
@@ -23,7 +23,7 @@ Kotlin 契约移植桌面端 `DtvApi` / `common` 与 Go `internal/platforms/douy
 | 房间 | `www.douyu.com/betard/{roomId}` |
 | 取流 | `websec/getEncryption` → POST `lapi/live/getH5PlayV1/{roomId}` |
 | 格式 | **几乎总是 FLV**（`format=flv`）。若 URL 含 `.m3u8` 则走 HLS |
-| ~300s 掐线 | 保留 Go 的 `expire=300&fcdn=ws` → `&expire=0`；播放器每 ~240s 重新 `streamUrl` 并切换 MediaItem；出错再重签。完整本地 FLV splice 中继留待后续 |
+| ~300s 掐线 | `expire=0` 补丁；~240s 静默重签；播放错误最多 3 次退避后重签再抛 UI。完整 FLV splice 中继仍延后 |
 
 ## 环境要求
 

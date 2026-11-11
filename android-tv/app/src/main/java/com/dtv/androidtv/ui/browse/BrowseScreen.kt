@@ -7,30 +7,27 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.tv.material3.ClickableSurfaceDefaults
@@ -38,11 +35,13 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
-import coil.compose.AsyncImage
+import com.dtv.androidtv.DtvTvApp
 import com.dtv.androidtv.data.DtvApi
 import com.dtv.androidtv.data.model.Category
 import com.dtv.androidtv.data.model.Streamer
-import kotlinx.coroutines.flow.distinctUntilChanged
+import com.dtv.androidtv.ui.TvLayout
+import com.dtv.androidtv.ui.components.CategoryChip
+import com.dtv.androidtv.ui.components.RoomRow
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -50,23 +49,22 @@ fun BrowseScreen(
     api: DtvApi,
     onOpenRoom: (Streamer) -> Unit,
     onPlayTest: () -> Unit,
-    viewModel: BrowseViewModel = viewModel(factory = BrowseViewModel.Factory(api)),
+    viewModel: BrowseViewModel = viewModel(
+        factory = BrowseViewModel.Factory(api, DtvTvApp.instance.libraryStore),
+    ),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val gridState = rememberLazyGridState()
+    val lifecycleOwner = LocalLifecycleOwner.current
 
-    LaunchedEffect(gridState, state.hasMore, state.loadingMore) {
-        snapshotFlow {
-            val info = gridState.layoutInfo
-            val last = info.visibleItemsInfo.lastOrNull()?.index ?: 0
-            last to info.totalItemsCount
-        }
-            .distinctUntilChanged()
-            .collect { (last, total) ->
-                if (total > 0 && last >= total - 4) {
-                    viewModel.loadMore()
-                }
+    // Returning from player: reload library rows so recent/follows stay current.
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.reloadLibraryRows()
             }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     Column(
@@ -77,7 +75,7 @@ fun BrowseScreen(
                     listOf(Color(0xFF0B1020), Color(0xFF16213E), Color(0xFF0B1020)),
                 ),
             )
-            .padding(horizontal = 48.dp, vertical = 28.dp),
+            .padding(TvLayout.ScreenPadding),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -91,7 +89,7 @@ fun BrowseScreen(
                     color = MaterialTheme.colorScheme.primary,
                 )
                 Text(
-                    text = "斗鱼 · ${state.selectedCategoryName}",
+                    text = "斗鱼 · 关注 / 最近 / ${state.selectedCategoryName}",
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),
                 )
@@ -108,45 +106,85 @@ fun BrowseScreen(
             }
         }
 
-        Spacer(Modifier.height(20.dp))
-
-        if (state.categories.isNotEmpty()) {
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                contentPadding = PaddingValues(bottom = 16.dp),
-            ) {
-                items(state.categories, key = { it.id }) { category ->
-                    CategoryChip(
-                        category = category,
-                        selected = category.id == state.selectedCategoryId,
-                        onClick = { viewModel.selectCategory(category) },
-                    )
-                }
-            }
-        }
+        Spacer(Modifier.height(18.dp))
 
         when {
-            state.loading && state.rooms.isEmpty() -> {
+            state.loading && state.rooms.isEmpty() && state.follows.isEmpty() && state.recent.isEmpty() -> {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("加载分区与直播列表…", style = MaterialTheme.typography.titleLarge)
+                    Text("加载中…", style = MaterialTheme.typography.titleLarge)
                 }
             }
             state.error != null && state.rooms.isEmpty() -> {
-                ErrorPanel(
-                    message = state.error ?: "出错了",
-                    onRetry = viewModel::refresh,
-                )
+                ErrorPanel(message = state.error ?: "出错了", onRetry = viewModel::refresh)
             }
             else -> {
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(4),
-                    state = gridState,
-                    verticalArrangement = Arrangement.spacedBy(18.dp),
-                    horizontalArrangement = Arrangement.spacedBy(18.dp),
+                LazyColumn(
                     modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(TvLayout.RowSpacing),
+                    contentPadding = PaddingValues(bottom = 24.dp),
                 ) {
-                    items(state.rooms, key = { it.id }) { room ->
-                        RoomCard(room = room, onClick = { onOpenRoom(room) })
+                    item(key = "follows") {
+                        RoomRow(
+                            title = "关注",
+                            rooms = state.follows,
+                            focusedIndex = state.focusFollows,
+                            onFocusedIndex = viewModel::setFocusFollows,
+                            onOpenRoom = { room ->
+                                viewModel.openRoom(room)
+                                onOpenRoom(room)
+                            },
+                            emptyHint = "在播放页按「关注」收藏直播间",
+                        )
+                    }
+                    item(key = "recent") {
+                        RoomRow(
+                            title = "最近观看",
+                            rooms = state.recent,
+                            focusedIndex = state.focusRecent,
+                            onFocusedIndex = viewModel::setFocusRecent,
+                            onOpenRoom = { room ->
+                                viewModel.openRoom(room)
+                                onOpenRoom(room)
+                            },
+                            emptyHint = "打开过的直播间会出现在这里",
+                        )
+                    }
+                    item(key = "categories") {
+                        CategoryRow(
+                            categories = state.categories,
+                            selectedId = state.selectedCategoryId,
+                            focusedIndex = state.focusCategory,
+                            onFocusedIndex = viewModel::setFocusCategory,
+                            onClick = { category, index ->
+                                viewModel.selectCategory(category, index)
+                            },
+                        )
+                    }
+                    item(key = "live") {
+                        if (state.loading && state.rooms.isEmpty()) {
+                            Text(
+                                "加载分区直播…",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                            )
+                        } else {
+                            RoomRow(
+                                title = "直播 · ${state.selectedCategoryName}",
+                                rooms = state.rooms,
+                                focusedIndex = state.focusLive,
+                                onFocusedIndex = { index ->
+                                    viewModel.setFocusLive(index)
+                                    if (index >= state.rooms.size - 4) {
+                                        viewModel.loadMore()
+                                    }
+                                },
+                                onOpenRoom = { room ->
+                                    viewModel.openRoom(room)
+                                    onOpenRoom(room)
+                                },
+                                emptyHint = state.error ?: "该分区暂无直播",
+                            )
+                        }
                     }
                 }
             }
@@ -154,87 +192,39 @@ fun BrowseScreen(
     }
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
+@OptIn(ExperimentalTvMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
-private fun CategoryChip(
-    category: Category,
-    selected: Boolean,
-    onClick: () -> Unit,
+@Suppress("UNUSED_PARAMETER")
+private fun CategoryRow(
+    categories: List<Category>,
+    selectedId: String,
+    focusedIndex: Int,
+    onFocusedIndex: (Int) -> Unit,
+    onClick: (Category, Int) -> Unit,
 ) {
-    Surface(
-        onClick = onClick,
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = if (selected) {
-                MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
-            } else {
-                MaterialTheme.colorScheme.surface
-            },
-            focusedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
-        ),
-    ) {
+    if (categories.isEmpty()) return
+    Column(modifier = Modifier.fillMaxWidth()) {
         Text(
-            text = category.name,
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
-            style = MaterialTheme.typography.labelLarge,
-            maxLines = 1,
+            text = "分区",
+            style = MaterialTheme.typography.titleLarge,
+            modifier = Modifier.padding(bottom = TvLayout.SectionTitleBottom),
         )
-    }
-}
-
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun RoomCard(
-    room: Streamer,
-    onClick: () -> Unit,
-) {
-    Surface(
-        onClick = onClick,
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
-        modifier = Modifier
-            .fillMaxWidth()
-            .onFocusChanged { /* focus scale handled by TV Surface */ },
-    ) {
-        Column {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(16f / 9f)
-                    .background(Color(0xFF1E2A44)),
-            ) {
-                if (room.cover.isNotBlank()) {
-                    AsyncImage(
-                        model = room.cover,
-                        contentDescription = room.title,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
-                if (!room.isLive) {
-                    Text(
-                        text = "未开播",
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(8.dp)
-                            .background(Color.Black.copy(alpha = 0.6f))
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.labelMedium,
-                    )
-                }
-            }
-            Column(modifier = Modifier.padding(12.dp)) {
-                Text(
-                    text = room.nickname,
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = room.title.ifBlank { room.categoryName },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = TvLayout.RowContentPadding,
+            modifier = Modifier.focusRestorer(),
+        ) {
+            itemsIndexed(categories, key = { _, c -> c.id }) { index, category ->
+                CategoryChip(
+                    label = category.name,
+                    selected = category.id == selectedId,
+                    onClick = {
+                        onFocusedIndex(index)
+                        onClick(category, index)
+                    },
+                    modifier = Modifier.onFocusChanged { state ->
+                        if (state.isFocused) onFocusedIndex(index)
+                    },
                 )
             }
         }
@@ -260,7 +250,6 @@ private fun ErrorPanel(
                     modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
                 )
             }
-            Spacer(Modifier.width(1.dp))
         }
     }
 }
