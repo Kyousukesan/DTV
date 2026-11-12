@@ -234,17 +234,19 @@ fun PlayerScreen(
                         ?: if (state.useTestHls) "测试流" else fallbackNickname,
                     title = state.info?.title
                         ?: if (state.useTestHls) "Media3 测试 HLS" else "",
-                    qualityLabel = listOfNotNull(qualityText, lineText?.let { "线路 $it" })
-                        .joinToString(" · ")
-                        .ifBlank { null },
+                    qualityLabel = listOfNotNull(
+                        qualityText?.let { "清晰度 $it" },
+                        lineText?.let { "线路 $it" },
+                    ).joinToString(" · ").ifBlank { null },
                     followed = state.followed,
                     danmakuEnabled = state.danmakuEnabled,
                     playPauseFocus = playPauseFocus,
                     isPlaying = isPlaying,
                     canCycleQuality = state.canCycleQuality,
                     canCycleLine = state.canCycleLine,
-                    qualityButtonLabel = state.selected?.label?.let { "清晰度 $it" } ?: "清晰度",
-                    lineButtonLabel = state.lineLabel?.let { "线路 $it" } ?: "线路",
+                    qualityButtonLabel = state.selected?.label?.let { "切换清晰度：$it" }
+                        ?: "切换清晰度",
+                    lineButtonLabel = state.lineLabel?.let { "切换线路：$it" } ?: "切换线路",
                     onPlayPause = {
                         val p = playback.player
                         if (p.isPlaying) p.pause() else p.play()
@@ -348,13 +350,13 @@ private fun PlayerChrome(
             )
             if (showFollow) {
                 ChromeButton(
-                    label = if (followed) "已关注" else "关注",
+                    label = if (followed) "取消关注" else "关注本房间",
                     onClick = onToggleFollow,
                 )
             }
             if (showDanmakuToggle) {
                 ChromeButton(
-                    label = if (danmakuEnabled) "弹幕开" else "弹幕关",
+                    label = if (danmakuEnabled) "弹幕：开" else "弹幕：关",
                     onClick = onToggleDanmaku,
                 )
             }
@@ -371,7 +373,7 @@ private fun PlayerChrome(
                 )
             }
             Spacer(Modifier.weight(1f))
-            ChromeButton(label = "返回", onClick = onBack)
+            ChromeButton(label = "退出播放", onClick = onBack)
         }
     }
 }
@@ -386,12 +388,18 @@ private fun ChromeButton(
     Surface(
         onClick = onClick,
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color.White.copy(alpha = 0.14f),
+            focusedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
+            pressedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.65f),
+        ),
         modifier = modifier,
     ) {
         Text(
             text = label,
-            modifier = Modifier.padding(horizontal = 28.dp, vertical = 14.dp),
+            modifier = Modifier.padding(horizontal = 22.dp, vertical = 12.dp),
             style = MaterialTheme.typography.labelLarge,
+            color = Color.White,
         )
     }
 }
@@ -420,7 +428,7 @@ private fun StatusPanel(
                 message,
                 color = Color.White.copy(alpha = 0.9f),
                 style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(horizontal = 24.dp),
+                modifier = Modifier.padding(horizontal = 32.dp),
             )
             Spacer(Modifier.height(28.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {

@@ -60,9 +60,9 @@ fun RoomRow(
         if (rooms.isEmpty()) {
             Text(
                 text = emptyHint ?: "暂无内容",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
-                modifier = Modifier.padding(vertical = 12.dp),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.58f),
+                modifier = Modifier.padding(vertical = 16.dp, horizontal = 4.dp),
             )
             return
         }
@@ -106,7 +106,11 @@ fun RoomCard(
 ) {
     Surface(
         onClick = onClick,
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = MaterialTheme.colorScheme.surface,
+            focusedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
+        ),
         modifier = modifier,
     ) {
         Column {
@@ -179,17 +183,18 @@ fun CategoryChip(
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = if (selected) {
-                MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+                MaterialTheme.colorScheme.primary.copy(alpha = 0.42f)
             } else {
-                MaterialTheme.colorScheme.surface
+                MaterialTheme.colorScheme.surface.copy(alpha = 0.75f)
             },
-            focusedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
+            focusedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.78f),
+            pressedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
         ),
         modifier = modifier,
     ) {
         Text(
             text = label,
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 11.dp),
             style = MaterialTheme.typography.labelLarge,
             maxLines = 1,
         )
