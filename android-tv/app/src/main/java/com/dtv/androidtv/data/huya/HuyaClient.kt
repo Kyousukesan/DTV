@@ -5,6 +5,7 @@ import com.dtv.androidtv.data.model.Category
 import com.dtv.androidtv.data.model.CategoryGroup
 import com.dtv.androidtv.data.model.LineOption
 import com.dtv.androidtv.data.model.LivePlatform
+import com.dtv.androidtv.data.model.SearchHit
 import com.dtv.androidtv.data.model.StreamInfo
 import com.dtv.androidtv.data.model.StreamVariant
 import com.dtv.androidtv.data.model.Streamer
@@ -23,8 +24,7 @@ import kotlin.random.Random
  * Kotlin contract-port of Go `internal/platforms/huya.Client`.
  *
  * Scope: static categories, live list, room card, FLV stream resolve (WUP token + anti-code),
- * and danmaku channel-id resolution for WS subscribe.
- * Search intentionally omitted.
+ * danmaku channel-id resolution, and keyword anchor search.
  */
 class HuyaClient(
     private val http: HttpJsonClient = HttpJsonClient(),
@@ -182,6 +182,78 @@ class HuyaClient(
             categoryName = "",
             isLive = data.candidates.isNotEmpty(),
         )
+    }
+
+    /** Keyword search for anchors (`SearchAnchor`). Prefers response["1"] docs. */
+    fun searchAnchor(
+        keyword: String,
+        page: Int = 1,
+        pageSize: Int = HuyaConstants.SEARCH_PAGE_SIZE,
+    ): List<SearchHit> {
+        val trimmed = keyword.trim()
+        if (trimmed.isEmpty()) return emptyList()
+        val safePage = max(1, page)
+        val safeSize = if (pageSize <= 0) HuyaConstants.SEARCH_PAGE_SIZE else pageSize
+        val params = linkedMapOf(
+            "m" to "Search",
+            "do" to "getSearchContent",
+            "q" to trimmed,
+            "uid" to "0",
+            "v" to "1",
+            "typ" to "-5",
+            "livestate" to "0",
+            "rows" to safeSize.toString(),
+            "start" to ((safePage - 1) * safeSize).toString(),
+        )
+        val query = params.entries.joinToString("&") { (k, v) ->
+            "$k=${URLEncoder.encode(v, "UTF-8")}"
+        }
+        val payload = http.getJson(
+            HuyaConstants.URL_SEARCH + "?" + query,
+            mapOf(
+                "User-Agent" to HuyaConstants.DESKTOP_UA,
+                "Referer" to "https://www.huya.com/search/",
+                "Origin" to "https://www.huya.com",
+                "Accept" to "*/*",
+            ),
+        )
+        val response = payload.optJSONObject("response") ?: return emptyList()
+        val sets = mutableListOf<JSONObject>()
+        val primary = response.optJSONObject("1")
+        if (primary != null) {
+            sets += primary
+        } else {
+            val keys = response.keys()
+            while (keys.hasNext()) {
+                response.optJSONObject(keys.next())?.let { sets += it }
+            }
+        }
+        val seen = linkedSetOf<String>()
+        val hits = mutableListOf<SearchHit>()
+        for (set in sets) {
+            val docs = set.optJSONArray("docs") ?: continue
+            for (i in 0 until docs.length()) {
+                val raw = docs.optJSONObject(i) ?: continue
+                val roomId = JsonUtil.asString(raw.opt("room_id"))
+                if (roomId.isEmpty() || roomId in seen) continue
+                seen += roomId
+                val nick = JsonUtil.asString(raw.opt("game_nick")).ifEmpty { "房间 $roomId" }
+                val liveOn = raw.opt("gameLiveOn")
+                val isLive = when (liveOn) {
+                    is Boolean -> liveOn
+                    else -> JsonUtil.asLong(liveOn) != 0L ||
+                        JsonUtil.asString(liveOn).equals("true", ignoreCase = true)
+                }
+                hits += SearchHit(
+                    id = roomId,
+                    nickname = nick,
+                    title = JsonUtil.asString(raw.opt("live_intro")),
+                    avatar = JsonUtil.asString(raw.opt("game_avatarUrl180")),
+                    isLive = isLive,
+                )
+            }
+        }
+        return hits
     }
 
     // ---- Stream resolve ---------------------------------------------------

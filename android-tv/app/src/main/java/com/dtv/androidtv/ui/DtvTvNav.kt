@@ -11,11 +11,13 @@ import com.dtv.androidtv.data.PlatformCatalog
 import com.dtv.androidtv.data.model.LivePlatform
 import com.dtv.androidtv.ui.browse.BrowseScreen
 import com.dtv.androidtv.ui.player.PlayerScreen
+import com.dtv.androidtv.ui.search.SearchScreen
 import com.dtv.androidtv.ui.settings.SettingsScreen
 
 private object Routes {
     const val BROWSE = "browse"
     const val SETTINGS = "settings"
+    const val SEARCH = "search"
     const val PLAYER = "player/{platform}/{roomId}?nickname={nickname}"
 }
 
@@ -40,11 +42,24 @@ fun DtvTvNav(
                     )
                 },
                 onOpenSettings = { nav.navigate(Routes.SETTINGS) },
+                onOpenSearch = { nav.navigate(Routes.SEARCH) },
                 onPlayTest = {
                     nav.navigate(
                         "player/${LivePlatform.DOUYU.id}/test?nickname=${android.net.Uri.encode("测试流")}",
                     )
                 },
+            )
+        }
+        composable(Routes.SEARCH) {
+            SearchScreen(
+                catalog = catalog,
+                onOpenRoom = { room ->
+                    val platform = room.platform.ifBlank { catalog.active.id }
+                    nav.navigate(
+                        "player/$platform/${room.id}?nickname=${android.net.Uri.encode(room.nickname)}",
+                    )
+                },
+                onBack = { nav.popBackStack() },
             )
         }
         composable(Routes.SETTINGS) {

@@ -22,6 +22,8 @@ internal object DouyuConstants {
     const val URL_GET_H5_PLAY = "https://www.douyu.com/lapi/live/getH5PlayV1/%s"
     const val URL_CATE_LIST = "https://m.douyu.com/api/cate/list"
     const val URL_DIRECTORY = "https://www.douyu.com/gapi/rkc/directory/%s/%d?limit=%d"
+    /** Anchor search (`SearchAnchor`). */
+    const val URL_SEARCH_USER = "https://www.douyu.com/japi/search/api/searchUser"
 
     /** Passport QR login (Go `qrlogin.go`). */
     const val URL_QR_GENERATE = "https://passport.douyu.com/scan/generateCode"

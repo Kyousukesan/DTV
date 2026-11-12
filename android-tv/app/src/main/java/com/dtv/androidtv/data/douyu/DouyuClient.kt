@@ -9,6 +9,7 @@ import com.dtv.androidtv.data.model.LivePlatform
 import com.dtv.androidtv.data.model.QRLoginCode
 import com.dtv.androidtv.data.model.QRLoginResult
 import com.dtv.androidtv.data.model.QRLoginStatus
+import com.dtv.androidtv.data.model.SearchHit
 import com.dtv.androidtv.data.model.StreamInfo
 import com.dtv.androidtv.data.model.StreamVariant
 import com.dtv.androidtv.data.model.Streamer
@@ -469,6 +470,70 @@ class DouyuClient(
             ),
             isLive = isLiveFromFlags(showStatus, isLoop, videoLoop),
         )
+    }
+
+    /**
+     * Keyword search for anchors (`SearchAnchor`).
+     * type===1 only; isLive: 1=live, 2=offline (normalized).
+     */
+    fun searchAnchor(keyword: String, page: Int = 1, pageSize: Int = 20): List<SearchHit> {
+        val trimmed = keyword.trim()
+        if (trimmed.isEmpty()) return emptyList()
+        val safePage = max(1, page)
+        val safeSize = if (pageSize <= 0) 20 else pageSize
+        val did = MessageDigest.getInstance("MD5")
+            .digest(System.nanoTime().toString().toByteArray())
+            .joinToString("") { "%02x".format(it) }
+        val target = DouyuConstants.URL_SEARCH_USER +
+            "?kw=${URLEncoder.encode(trimmed, "UTF-8")}" +
+            "&page=$safePage&pageSize=$safeSize&filterType=0"
+        val payload = http.getJson(
+            target,
+            mapOf(
+                "User-Agent" to DouyuConstants.DESKTOP_UA,
+                "Referer" to "https://www.douyu.com/search/",
+                "Cookie" to "dy_did=$did; acf_did=$did",
+            ),
+        )
+        val data = payload.optJSONObject("data") ?: JSONObject()
+        var items = data.optJSONArray("relateUser")
+        if (items == null || items.length() == 0) {
+            items = data.optJSONArray("relateUserList") ?: JSONArray()
+        }
+        val out = mutableListOf<SearchHit>()
+        for (i in 0 until items.length()) {
+            val item = items.optJSONObject(i) ?: continue
+            // Go: skip when type is present and not 1 (anchor).
+            if (item.has("type") && JsonUtil.asLong(item.opt("type")) != 1L) continue
+            val info = item.optJSONObject("anchorInfo") ?: continue
+            var roomId = JsonUtil.asString(info.opt("rid"))
+            if (roomId.isEmpty()) {
+                val bk = JsonUtil.asString(info.opt("bkUrl"))
+                if (bk.isNotEmpty()) roomId = bk.trimEnd('/').substringAfterLast('/')
+            }
+            val nickname = firstNonEmpty(
+                JsonUtil.asString(info.opt("nickName")),
+                JsonUtil.asString(info.opt("nickname")),
+            )
+            if (roomId.isEmpty() || nickname.isEmpty()) continue
+            val title = firstNonEmpty(
+                JsonUtil.asString(info.opt("roomName")),
+                JsonUtil.asString(info.opt("description")),
+                "暂无标题",
+            )
+            val liveRaw = JsonUtil.asLong(info.opt("isLive"))
+            out += SearchHit(
+                id = roomId,
+                nickname = nickname,
+                title = title,
+                avatar = JsonUtil.fullUrl(
+                    DouyuConstants.AVATAR_PREFIX,
+                    JsonUtil.asString(info.opt("avatar")),
+                ),
+                isLive = liveRaw == 1L,
+            )
+        }
+        return out
     }
 
     /** Light room card for follow/recent refresh (`FetchRoomInfo`). */

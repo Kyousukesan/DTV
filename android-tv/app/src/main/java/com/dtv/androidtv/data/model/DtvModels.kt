@@ -70,6 +70,15 @@ data class LineOption(
     val label: String,
 )
 
+/** Search result row (Go `common.SearchHit`). */
+data class SearchHit(
+    val id: String,
+    val nickname: String,
+    val title: String,
+    val avatar: String,
+    val isLive: Boolean,
+)
+
 /** Player-page payload: room meta + variants + lines. */
 data class StreamInfo(
     val roomId: String,

@@ -2,13 +2,14 @@ package com.dtv.androidtv.data.bilibili
 
 import com.dtv.androidtv.data.DtvApi
 import com.dtv.androidtv.data.model.CategoryGroup
+import com.dtv.androidtv.data.model.SearchHit
 import com.dtv.androidtv.data.model.StreamInfo
 import com.dtv.androidtv.data.model.Streamer
 import com.dtv.androidtv.data.model.StreamerPage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/** Bilibili-backed [DtvApi] — blocking OkHttp calls hop to IO. No danmaku/QR. */
+/** Bilibili-backed [DtvApi] — blocking OkHttp calls hop to IO. */
 class BilibiliDtvApi(
     private val client: BilibiliClient = BilibiliClient(),
 ) : DtvApi {
@@ -26,4 +27,7 @@ class BilibiliDtvApi(
 
     override suspend fun getRoomInfo(roomId: String): Streamer =
         withContext(Dispatchers.IO) { client.fetchRoomInfo(roomId) }
+
+    override suspend fun search(keyword: String, page: Int): List<SearchHit> =
+        withContext(Dispatchers.IO) { client.searchRoom(keyword, page) }
 }

@@ -88,6 +88,10 @@ android {
                 "dtv.huyaWsProbe",
                 System.getProperty("dtv.huyaWsProbe") ?: "",
             )
+            it.systemProperty(
+                "dtv.liveSearchQualitySmoke",
+                System.getProperty("dtv.liveSearchQualitySmoke") ?: "",
+            )
         }
     }
 }

@@ -2,6 +2,7 @@ package com.dtv.androidtv.data.huya
 
 import com.dtv.androidtv.data.DtvApi
 import com.dtv.androidtv.data.model.CategoryGroup
+import com.dtv.androidtv.data.model.SearchHit
 import com.dtv.androidtv.data.model.StreamInfo
 import com.dtv.androidtv.data.model.Streamer
 import com.dtv.androidtv.data.model.StreamerPage
@@ -26,4 +27,7 @@ class HuyaDtvApi(
 
     override suspend fun getRoomInfo(roomId: String): Streamer =
         withContext(Dispatchers.IO) { client.fetchRoomInfo(roomId) }
+
+    override suspend fun search(keyword: String, page: Int): List<SearchHit> =
+        withContext(Dispatchers.IO) { client.searchAnchor(keyword, page) }
 }
