@@ -72,6 +72,10 @@ android {
                 "dtv.liveDanmakuRoom",
                 System.getProperty("dtv.liveDanmakuRoom") ?: "8682569",
             )
+            it.systemProperty(
+                "dtv.liveMultiPlatformSmoke",
+                System.getProperty("dtv.liveMultiPlatformSmoke") ?: "",
+            )
         }
     }
 }

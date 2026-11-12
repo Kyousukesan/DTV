@@ -7,18 +7,19 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.dtv.androidtv.data.DtvApi
+import com.dtv.androidtv.data.PlatformCatalog
+import com.dtv.androidtv.data.model.LivePlatform
 import com.dtv.androidtv.ui.browse.BrowseScreen
 import com.dtv.androidtv.ui.player.PlayerScreen
 
 private object Routes {
     const val BROWSE = "browse"
-    const val PLAYER = "player/{roomId}?nickname={nickname}"
+    const val PLAYER = "player/{platform}/{roomId}?nickname={nickname}"
 }
 
 @Composable
 fun DtvTvNav(
-    api: DtvApi,
+    catalog: PlatformCatalog,
     modifier: Modifier = Modifier,
 ) {
     val nav = rememberNavController()
@@ -29,20 +30,24 @@ fun DtvTvNav(
     ) {
         composable(Routes.BROWSE) {
             BrowseScreen(
-                api = api,
+                catalog = catalog,
                 onOpenRoom = { room ->
+                    val platform = room.platform.ifBlank { catalog.active.id }
                     nav.navigate(
-                        "player/${room.id}?nickname=${android.net.Uri.encode(room.nickname)}",
+                        "player/$platform/${room.id}?nickname=${android.net.Uri.encode(room.nickname)}",
                     )
                 },
                 onPlayTest = {
-                    nav.navigate("player/test?nickname=${android.net.Uri.encode("测试流")}")
+                    nav.navigate(
+                        "player/${LivePlatform.DOUYU.id}/test?nickname=${android.net.Uri.encode("测试流")}",
+                    )
                 },
             )
         }
         composable(
             route = Routes.PLAYER,
             arguments = listOf(
+                navArgument("platform") { type = NavType.StringType },
                 navArgument("roomId") { type = NavType.StringType },
                 navArgument("nickname") {
                     type = NavType.StringType
@@ -51,10 +56,12 @@ fun DtvTvNav(
                 },
             ),
         ) { entry ->
+            val platform = entry.arguments?.getString("platform").orEmpty()
             val roomId = entry.arguments?.getString("roomId").orEmpty()
             val nickname = entry.arguments?.getString("nickname").orEmpty()
             PlayerScreen(
-                api = api,
+                api = catalog.apiFor(platform),
+                platformId = platform.ifBlank { LivePlatform.DOUYU.id },
                 roomId = roomId,
                 fallbackNickname = nickname,
                 onBack = { nav.popBackStack() },

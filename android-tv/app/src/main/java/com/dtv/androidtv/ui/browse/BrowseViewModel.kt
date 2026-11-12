@@ -3,10 +3,10 @@ package com.dtv.androidtv.ui.browse
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.dtv.androidtv.data.DtvApi
-import com.dtv.androidtv.data.douyu.DouyuConstants
+import com.dtv.androidtv.data.PlatformCatalog
 import com.dtv.androidtv.data.library.LibraryStore
 import com.dtv.androidtv.data.model.Category
+import com.dtv.androidtv.data.model.LivePlatform
 import com.dtv.androidtv.data.model.Streamer
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -21,30 +21,33 @@ data class BrowseUiState(
     val loading: Boolean = true,
     val loadingMore: Boolean = false,
     val refreshingLibrary: Boolean = false,
+    val platform: LivePlatform = LivePlatform.DOUYU,
     val follows: List<Streamer> = emptyList(),
     val recent: List<Streamer> = emptyList(),
     val categories: List<Category> = emptyList(),
-    val selectedCategoryId: String = DouyuConstants.DEFAULT_CATE2_ID,
-    val selectedCategoryName: String = DouyuConstants.DEFAULT_CATE2_NAME,
+    val selectedCategoryId: String = "",
+    val selectedCategoryName: String = "",
     val rooms: List<Streamer> = emptyList(),
     val page: Int = 0,
     val hasMore: Boolean = false,
     val error: String? = null,
-    /** Per-row focus memory: last focused card index. */
     val focusFollows: Int = 0,
     val focusRecent: Int = 0,
     val focusLive: Int = 0,
     val focusCategory: Int = 0,
+    val focusPlatform: Int = 0,
 )
 
 class BrowseViewModel(
-    private val api: DtvApi,
+    private val catalog: PlatformCatalog,
     private val library: LibraryStore,
 ) : ViewModel() {
     private val _state = MutableStateFlow(
         BrowseUiState(
+            platform = catalog.active,
             follows = library.loadFollows(),
             recent = library.loadRecent(),
+            focusPlatform = LivePlatform.entries.indexOf(catalog.active).coerceAtLeast(0),
         ),
     )
     val state: StateFlow<BrowseUiState> = _state.asStateFlow()
@@ -53,26 +56,55 @@ class BrowseViewModel(
         refresh()
     }
 
-    /** Reload categories + live list and refresh follow/recent live flags from Douyu. */
+    fun selectPlatform(platform: LivePlatform, index: Int) {
+        if (platform == _state.value.platform && _state.value.rooms.isNotEmpty()) {
+            _state.update { it.copy(focusPlatform = index) }
+            return
+        }
+        catalog.active = platform
+        _state.update {
+            it.copy(
+                platform = platform,
+                focusPlatform = index,
+                focusCategory = 0,
+                focusLive = 0,
+                selectedCategoryId = "",
+                selectedCategoryName = "",
+                rooms = emptyList(),
+                categories = emptyList(),
+                error = null,
+            )
+        }
+        refresh()
+    }
+
+    /** Reload categories + live list for the active platform; refresh library meta. */
     fun refresh() {
         viewModelScope.launch {
+            val platform = catalog.active
             _state.update {
                 it.copy(
                     loading = true,
                     error = null,
+                    platform = platform,
                     follows = library.loadFollows(),
                     recent = library.loadRecent(),
                 )
             }
             try {
+                val api = catalog.api(platform)
                 val groups = api.listCategories()
                 val flat = groups.flatMap { it.categories }
-                val preferred = flat.firstOrNull { it.id == DouyuConstants.DEFAULT_CATE2_ID }
-                    ?: flat.firstOrNull()
-                val cateId = preferred?.id ?: DouyuConstants.DEFAULT_CATE2_ID
-                val cateName = preferred?.name ?: DouyuConstants.DEFAULT_CATE2_NAME
+                val preferredId = catalog.defaultCategoryId(platform)
+                val preferred = flat.firstOrNull { it.id == preferredId } ?: flat.firstOrNull()
+                val cateId = preferred?.id.orEmpty()
+                val cateName = preferred?.name.orEmpty()
                 val cateIndex = flat.indexOfFirst { it.id == cateId }.coerceAtLeast(0)
-                val page = api.listStreamers(cateId, page = 1)
+                val page = if (cateId.isNotBlank()) {
+                    api.listStreamers(cateId, page = 1)
+                } else {
+                    com.dtv.androidtv.data.model.StreamerPage(emptyList(), 1, false)
+                }
                 _state.update {
                     it.copy(
                         loading = false,
@@ -95,14 +127,13 @@ class BrowseViewModel(
         }
     }
 
-    /** Soft-refresh follow/recent cards against Douyu betard (best-effort). */
+    /** Soft-refresh follow/recent cards against each item's platform API. */
     fun refreshLibraryMeta() {
         viewModelScope.launch {
             _state.update { it.copy(refreshingLibrary = true) }
-            val ids = (library.loadFollows() + library.loadRecent())
-                .map { it.id }
-                .distinct()
-            if (ids.isEmpty()) {
+            val items = (library.loadFollows() + library.loadRecent())
+                .distinctBy { "${it.platform}:${it.id}" }
+            if (items.isEmpty()) {
                 _state.update {
                     it.copy(
                         refreshingLibrary = false,
@@ -113,11 +144,15 @@ class BrowseViewModel(
                 return@launch
             }
             coroutineScope {
-                ids.map { id ->
+                items.map { card ->
                     async {
                         runCatching {
-                            val fresh = api.getRoomInfo(id)
-                            library.updateCached(fresh)
+                            val fresh = catalog.apiFor(card.platform).getRoomInfo(card.id)
+                            library.updateCached(
+                                fresh.copy(
+                                    platform = fresh.platform.ifBlank { card.platform },
+                                ),
+                            )
                         }
                     }
                 }.awaitAll()
@@ -159,7 +194,7 @@ class BrowseViewModel(
                 )
             }
             try {
-                val page = api.listStreamers(category.id, page = 1)
+                val page = catalog.api().listStreamers(category.id, page = 1)
                 _state.update {
                     it.copy(
                         loading = false,
@@ -180,7 +215,7 @@ class BrowseViewModel(
         viewModelScope.launch {
             _state.update { it.copy(loadingMore = true, error = null) }
             try {
-                val next = api.listStreamers(snap.selectedCategoryId, page = snap.page + 1)
+                val next = catalog.api().listStreamers(snap.selectedCategoryId, page = snap.page + 1)
                 _state.update {
                     it.copy(
                         loadingMore = false,
@@ -201,6 +236,7 @@ class BrowseViewModel(
     fun setFocusRecent(index: Int) = _state.update { it.copy(focusRecent = index) }
     fun setFocusLive(index: Int) = _state.update { it.copy(focusLive = index) }
     fun setFocusCategory(index: Int) = _state.update { it.copy(focusCategory = index) }
+    fun setFocusPlatform(index: Int) = _state.update { it.copy(focusPlatform = index) }
 
     fun openRoom(streamer: Streamer) {
         library.recordRecent(streamer)
@@ -208,11 +244,11 @@ class BrowseViewModel(
     }
 
     class Factory(
-        private val api: DtvApi,
+        private val catalog: PlatformCatalog,
         private val library: LibraryStore,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            BrowseViewModel(api, library) as T
+            BrowseViewModel(catalog, library) as T
     }
 }

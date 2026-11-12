@@ -82,7 +82,7 @@ fun RoomRow(
                 .fillMaxWidth()
                 .focusRestorer(),
         ) {
-            itemsIndexed(rooms, key = { _, room -> room.id }) { index, room ->
+            itemsIndexed(rooms, key = { _, room -> "${room.platform}:${room.id}" }) { index, room ->
                 RoomCard(
                     room = room,
                     onClick = { onOpenRoom(room) },
@@ -145,7 +145,17 @@ fun RoomCard(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = room.title.ifBlank { room.categoryName },
+                    text = buildString {
+                        val plat = when (room.platform.lowercase()) {
+                            "huya" -> "虎牙"
+                            "douyin" -> "抖音"
+                            "bilibili" -> "B站"
+                            "douyu" -> "斗鱼"
+                            else -> room.platform
+                        }
+                        if (plat.isNotBlank()) append(plat).append(" · ")
+                        append(room.title.ifBlank { room.categoryName })
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
                     maxLines = 1,

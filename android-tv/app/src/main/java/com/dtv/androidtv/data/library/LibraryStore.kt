@@ -21,12 +21,24 @@ class LibraryStore(context: Context) {
     fun isFollowed(roomId: String): Boolean =
         loadFollows().any { it.id == roomId }
 
-    /** Upsert follow; newest first. Caps at [MAX_FOLLOWS]. */
+    fun isFollowed(platform: String, roomId: String): Boolean =
+        loadFollows().any { sameRoom(it, platform, roomId) }
+
+    /** Upsert follow; newest first. Caps at [MAX_FOLLOWS]. Keyed by platform+id. */
     @Synchronized
     fun follow(streamer: Streamer) {
-        val next = listOf(streamer.copy(platform = LivePlatform.DOUYU.id)) +
-            loadFollows().filterNot { it.id == streamer.id }
+        val platform = streamer.platform.ifBlank { LivePlatform.DOUYU.id }
+        val next = listOf(streamer.copy(platform = platform)) +
+            loadFollows().filterNot { sameRoom(it, platform, streamer.id) }
         writeList(KEY_FOLLOWS, next.take(MAX_FOLLOWS))
+    }
+
+    @Synchronized
+    fun unfollow(platform: String, roomId: String) {
+        writeList(
+            KEY_FOLLOWS,
+            loadFollows().filterNot { sameRoom(it, platform, roomId) },
+        )
     }
 
     @Synchronized
@@ -35,8 +47,9 @@ class LibraryStore(context: Context) {
     }
 
     fun toggleFollow(streamer: Streamer): Boolean {
-        return if (isFollowed(streamer.id)) {
-            unfollow(streamer.id)
+        val platform = streamer.platform.ifBlank { LivePlatform.DOUYU.id }
+        return if (isFollowed(platform, streamer.id)) {
+            unfollow(platform, streamer.id)
             false
         } else {
             follow(streamer)
@@ -48,19 +61,28 @@ class LibraryStore(context: Context) {
     @Synchronized
     fun recordRecent(streamer: Streamer) {
         if (streamer.id.isBlank() || streamer.id == "test") return
-        val next = listOf(streamer.copy(platform = LivePlatform.DOUYU.id)) +
-            loadRecent().filterNot { it.id == streamer.id }
+        val platform = streamer.platform.ifBlank { LivePlatform.DOUYU.id }
+        val next = listOf(streamer.copy(platform = platform)) +
+            loadRecent().filterNot { sameRoom(it, platform, streamer.id) }
         writeList(KEY_RECENT, next.take(MAX_RECENT))
     }
 
-    /** Replace a follow/recent card with fresher Douyu room meta (live flag, cover…). */
+    /** Replace a follow/recent card with fresher room meta (live flag, cover…). */
     @Synchronized
     fun updateCached(streamer: Streamer) {
+        val platform = streamer.platform.ifBlank { LivePlatform.DOUYU.id }
         fun merge(list: List<Streamer>): List<Streamer> =
-            list.map { if (it.id == streamer.id) streamer else it }
+            list.map {
+                if (sameRoom(it, platform, streamer.id)) streamer.copy(platform = platform) else it
+            }
         writeList(KEY_FOLLOWS, merge(loadFollows()))
         writeList(KEY_RECENT, merge(loadRecent()))
     }
+
+    private fun sameRoom(item: Streamer, platform: String, roomId: String): Boolean =
+        item.id == roomId &&
+            item.platform.ifBlank { LivePlatform.DOUYU.id }
+                .equals(platform.ifBlank { LivePlatform.DOUYU.id }, ignoreCase = true)
 
     /** Player danmaku overlay; default on (documented in android-tv README). */
     fun isDanmakuEnabled(): Boolean = prefs.getBoolean(KEY_DANMAKU_ENABLED, true)
