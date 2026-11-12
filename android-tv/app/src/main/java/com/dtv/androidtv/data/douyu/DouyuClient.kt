@@ -192,6 +192,22 @@ class DouyuClient(
         )
     }
 
+    /** Light room card for follow/recent refresh (`FetchRoomInfo`). */
+    fun fetchRoomInfo(roomId: String): Streamer {
+        val detail = fetchRoomDetail(roomId)
+        return Streamer(
+            id = detail.realRoomId,
+            platform = LivePlatform.DOUYU.id,
+            nickname = detail.nickname,
+            title = detail.title,
+            cover = detail.cover,
+            avatar = detail.avatar,
+            viewers = 0L,
+            categoryName = detail.category,
+            isLive = detail.isLive,
+        )
+    }
+
     // ---- Stream resolve ---------------------------------------------------
 
     /**

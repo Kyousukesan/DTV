@@ -3,6 +3,7 @@ package com.dtv.androidtv.data
 import com.dtv.androidtv.data.douyu.DouyuClient
 import com.dtv.androidtv.data.model.CategoryGroup
 import com.dtv.androidtv.data.model.StreamInfo
+import com.dtv.androidtv.data.model.Streamer
 import com.dtv.androidtv.data.model.StreamerPage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -22,4 +23,7 @@ class DouyuDtvApi(
 
     override suspend fun getStreamUrl(roomId: String, quality: String, line: String): String =
         withContext(Dispatchers.IO) { client.streamUrl(roomId, quality, line) }
+
+    override suspend fun getRoomInfo(roomId: String): Streamer =
+        withContext(Dispatchers.IO) { client.fetchRoomInfo(roomId) }
 }
