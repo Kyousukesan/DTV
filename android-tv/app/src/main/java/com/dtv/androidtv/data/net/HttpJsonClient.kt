@@ -69,6 +69,25 @@ class HttpJsonClient(
         }
     }
 
+    /** Raw octet-stream POST (Huya WUP / TARS). */
+    fun postBytes(
+        url: String,
+        body: ByteArray,
+        headers: Map<String, String> = emptyMap(),
+    ): ByteArray {
+        val media = "application/octet-stream".toMediaType()
+        val builder = Request.Builder().url(url).post(body.toRequestBody(media))
+        headers.forEach { (k, v) -> builder.header(k, v) }
+        client.newCall(builder.build()).execute().use { response ->
+            val bytes = response.body?.bytes() ?: ByteArray(0)
+            if (!response.isSuccessful) {
+                val preview = bytes.decodeToString().take(200)
+                throw IOException("HTTP ${response.code}: $preview")
+            }
+            return bytes
+        }
+    }
+
     companion object {
         fun defaultClient(): OkHttpClient =
             OkHttpClient.Builder()

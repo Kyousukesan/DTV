@@ -36,8 +36,9 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.dtv.androidtv.DtvTvApp
-import com.dtv.androidtv.data.DtvApi
+import com.dtv.androidtv.data.PlatformCatalog
 import com.dtv.androidtv.data.model.Category
+import com.dtv.androidtv.data.model.LivePlatform
 import com.dtv.androidtv.data.model.Streamer
 import com.dtv.androidtv.ui.TvLayout
 import com.dtv.androidtv.ui.components.CategoryChip
@@ -46,11 +47,11 @@ import com.dtv.androidtv.ui.components.RoomRow
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun BrowseScreen(
-    api: DtvApi,
+    catalog: PlatformCatalog,
     onOpenRoom: (Streamer) -> Unit,
     onPlayTest: () -> Unit,
     viewModel: BrowseViewModel = viewModel(
-        factory = BrowseViewModel.Factory(api, DtvTvApp.instance.libraryStore),
+        factory = BrowseViewModel.Factory(catalog, DtvTvApp.instance.libraryStore),
     ),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -89,7 +90,7 @@ fun BrowseScreen(
                     color = MaterialTheme.colorScheme.primary,
                 )
                 Text(
-                    text = "斗鱼 · 关注 / 最近 / ${state.selectedCategoryName}",
+                    text = "${catalog.label(state.platform)} · 关注 / 最近 / ${state.selectedCategoryName}",
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),
                 )
@@ -106,7 +107,15 @@ fun BrowseScreen(
             }
         }
 
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(12.dp))
+        PlatformRow(
+            selected = state.platform,
+            focusedIndex = state.focusPlatform,
+            onFocusedIndex = viewModel::setFocusPlatform,
+            labelOf = catalog::label,
+            onClick = { platform, index -> viewModel.selectPlatform(platform, index) },
+        )
+        Spacer(Modifier.height(12.dp))
 
         when {
             state.loading && state.rooms.isEmpty() && state.follows.isEmpty() && state.recent.isEmpty() -> {
@@ -187,6 +196,43 @@ fun BrowseScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class, ExperimentalComposeUiApi::class)
+@Composable
+private fun PlatformRow(
+    selected: LivePlatform,
+    focusedIndex: Int,
+    onFocusedIndex: (Int) -> Unit,
+    labelOf: (LivePlatform) -> String,
+    onClick: (LivePlatform, Int) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = "平台",
+            style = MaterialTheme.typography.titleLarge,
+            modifier = Modifier.padding(bottom = TvLayout.SectionTitleBottom),
+        )
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = TvLayout.RowContentPadding,
+            modifier = Modifier.focusRestorer(),
+        ) {
+            itemsIndexed(LivePlatform.entries, key = { _, p -> p.id }) { index, platform ->
+                CategoryChip(
+                    label = labelOf(platform),
+                    selected = platform == selected,
+                    onClick = {
+                        onFocusedIndex(index)
+                        onClick(platform, index)
+                    },
+                    modifier = Modifier.onFocusChanged { focus ->
+                        if (focus.isFocused) onFocusedIndex(index)
+                    },
+                )
             }
         }
     }

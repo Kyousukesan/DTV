@@ -1,32 +1,33 @@
-# DTV Android TV（Slice-1 + M3 · 斗鱼）
+# DTV Android TV（多平台 · 斗鱼 / 虎牙 / 抖音 / B 站）
 
 本目录是 LIVE-TV 在本 fork 下的 **Android TV 原生客户端**（Compose for TV + Media3），
-Kotlin 契约移植桌面端 `DtvApi` / `common` 与 Go `internal/platforms/douyu`。
+Kotlin 契约移植桌面端 `DtvApi` / `common` 与 Go `internal/platforms/{douyu,huya,douyin,bilibili}`。
 **不**嵌入 Wails/React。
 
 ## 范围（已实现）
 
 - Android TV / Leanback launcher、DPAD 友好浏览 → 选房间 → 全屏播放
+- **LT-7 多平台**：浏览页平台切换（斗鱼 / 虎牙 / 抖音 / B 站）；关注 / 最近按 `platform+roomId` 持久化
 - **M3 首页行**：关注 / 最近观看（本地 SharedPreferences）+ 分区直播行；行内 `focusRestorer` 焦点记忆；overscan safe padding
 - 播放页 chrome：OK 显控 / 播放暂停、关注切换、Back 退出；未开播 / 错误可读 + 重试
-- Media3：斗鱼 FLV + 测试 HLS
-- **LT-5 FLV 续流**：本地 `127.0.0.1` splice 中继（移植桌面 `StreamRelayService` / `flv_relay`）：到期前预取新签名直链，在 FLV tag/关键帧边界拼接；Media3 只播一条本地 URL。失败时仍保留 quiet re-sign + 错误退避兜底。
-- **LT-6 斗鱼弹幕**：TCP STT（`danmuproxy.douyu.com:8601+`，移植 Go `danmaku.go`）→ Compose 全屏叠加层（scroll / top / bottom）；播放器 chrome **弹幕开/关**（默认开，SharedPreferences 持久化）。
+- Media3：斗鱼 / 虎牙 / 抖音 **FLV**；B 站 **HLS**；测试 HLS
+- **LT-5 FLV 续流**：本地 `127.0.0.1` splice 中继（**仅斗鱼**）；虎牙 / 抖音直连 progressive + quiet re-sign
+- **LT-6 斗鱼弹幕**：TCP STT → Compose 叠加层；chrome **弹幕开/关**（默认开）。其它平台弹幕延后。
 
 ## 明确延后
 
-扫码登录、虎牙/抖音/B 站、局域网同步。
+扫码登录、虎牙/抖音/B 站弹幕、局域网同步。
 
-## Douyu 播放路径说明
+## 平台播放路径
 
-| 步骤 | 行为 |
-| --- | --- |
-| 列表 | `m.douyu.com/api/cate/list` + `gapi/rkc/directory/2_{cate2}/{page}` |
-| 房间 | `www.douyu.com/betard/{roomId}` |
-| 取流 | `websec/getEncryption` → POST `lapi/live/getH5PlayV1/{roomId}` |
-| 格式 | **几乎总是 FLV**（`format=flv`）。若 URL 含 `.m3u8` 则走 HLS |
-| ~300s 掐线 | **本地 FLV splice 中继**（`DouyuFlvRelayServer` + `relayFlv`）：~295s 预取新直链；CDN EOF 时 `eof_renew`，或边沿 TCP 不掐时在 TTL 主动 `ttl_rotate`；丢新段文件头/seq header，从越过时间轴的关键帧接上；`expire=0` 仍保留。中继失败时回退 MediaItem re-sign。 |
-| 弹幕 | 明文 TCP `danmuproxy.douyu.com:8601/8602/8603` + STT：`loginreq` → `joingroup` → 45s `mrkl`；`chatmsg`/`uenter` 归一化为 `DanmakuMessage`；Compose `DanmakuOverlay` 渲染。 |
+| 平台 | 列表 | 取流 | Media3 |
+| --- | --- | --- | --- |
+| 斗鱼 | cate/list + directory | getH5PlayV1 → **FLV** | 本地 splice 中继（~300s） |
+| 虎牙 | getLiveList（静态分区） | profileRoom + WUP token → **FLV** | 直连 progressive + re-sign |
+| 抖音 | partition/detail/room/v2（a_bogus） | reflow/info → 优先 H.264 **FLV**（可 HLS） | 直连；HEVC 原画尽量避开 |
+| B 站 | Area/getList + second/getList（w_webid） | getRoomPlayInfo → **HLS only** | `HlsMediaSource` |
+
+斗鱼弹幕：明文 TCP `danmuproxy.douyu.com:8601+` STT（见 LT-6）。
 
 ## 续流验证
 
@@ -37,6 +38,9 @@ cd android-tv
 ./gradlew :app:testDebugUnitTest --tests com.dtv.androidtv.player.LiveFlvContinuitySmokeTest \
   -Ddtv.liveFlvSmoke=true -Ddtv.liveFlvSmokeSeconds=320
 # 日志：app/build/reports/live-flv-continuity.log
+# 可选：虎牙 / 抖音 / B 站列表+取流冒烟
+./gradlew :app:testDebugUnitTest --tests com.dtv.androidtv.data.LiveMultiPlatformSmokeTest \
+  -Ddtv.liveMultiPlatformSmoke=true
 ```
 
 ## 环境要求

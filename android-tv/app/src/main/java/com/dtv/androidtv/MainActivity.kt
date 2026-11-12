@@ -19,7 +19,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             DtvTvTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    DtvTvNav(api = DtvTvApp.instance.dtvApi)
+                    DtvTvNav(catalog = DtvTvApp.instance.platforms)
                 }
             }
         }

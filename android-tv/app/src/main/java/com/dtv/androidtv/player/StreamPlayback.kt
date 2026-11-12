@@ -14,6 +14,7 @@ import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import com.dtv.androidtv.data.douyu.DouyuConstants
+import com.dtv.androidtv.data.model.LivePlatform
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -23,23 +24,24 @@ import kotlinx.coroutines.runBlocking
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Media3 playback helper for Douyu FLV (+ test HLS).
+ * Media3 playback helper for Douyu / Huya / Douyin / Bilibili.
  *
- * Douyu FLV continuity (LT-5):
- * - Primary: localhost [DouyuFlvRelayServer] splices FLV tags across ~300s CDN cuts
- *   (port of desktop StreamRelayService / flv_relay). Media3 plays one continuous URL.
- * - Fallback: quiet MediaItem re-sign (~240s) + error backoff if relay prepare fails.
+ * - Douyu FLV: localhost [DouyuFlvRelayServer] splice across ~300s CDN cuts.
+ * - Huya / Douyin FLV: direct progressive (+ quiet re-sign fallback); no Douyu relay.
+ * - Bilibili: HLS via [HlsMediaSource] (desktop also prefers HLS).
  */
 @UnstableApi
 class StreamPlayback(
     context: Context,
     private val scope: CoroutineScope,
+    private val platformId: String,
     private val resolveUrl: suspend (quality: String, line: String) -> String,
 ) {
     private val appContext = context.applicationContext
+    private val platform = LivePlatform.fromId(platformId)
 
     private val httpFactory = DefaultHttpDataSource.Factory()
-        .setUserAgent(DouyuConstants.DESKTOP_UA)
+        .setUserAgent(userAgentFor(platform))
         .setAllowCrossProtocolRedirects(true)
         .setConnectTimeoutMs(15_000)
         .setReadTimeoutMs(0)
@@ -48,10 +50,6 @@ class StreamPlayback(
         .setMediaSourceFactory(DefaultMediaSourceFactory(httpFactory))
         .build()
 
-    /**
-     * Local splice relay. Resolve uses the ViewModel-bound [resolveUrl]
-     * (room id is closed over there); session still stores room/quality/line.
-     */
     private val relayServer = DouyuFlvRelayServer { _, quality, line ->
         runBlocking { resolveUrl(quality, line) }
     }
@@ -103,7 +101,9 @@ class StreamPlayback(
         renewJob?.cancel()
         usingRelay = false
 
-        if (!format.equals("hls", true) && roomId.isNotBlank() && roomId != "test") {
+        val wantsFlv = !format.equals("hls", true) && !url.contains(".m3u8")
+        // Local splice relay is Douyu-specific (signed CDN cut ~300s).
+        if (wantsFlv && platform == LivePlatform.DOUYU && roomId.isNotBlank() && roomId != "test") {
             try {
                 val prepared = relayServer.prepare(roomId, quality, line)
                 usingRelay = true
@@ -119,7 +119,7 @@ class StreamPlayback(
         }
 
         setMedia(url, format, isLocalRelay = false)
-        startRenewLoop()
+        if (wantsFlv) startRenewLoop()
     }
 
     fun playTestHls() {
@@ -143,14 +143,15 @@ class StreamPlayback(
 
     private fun setMedia(url: String, format: String, isLocalRelay: Boolean) {
         val headers = mutableMapOf(
-            "User-Agent" to DouyuConstants.DESKTOP_UA,
-            "Accept" to "video/x-flv,application/octet-stream,*/*",
+            "User-Agent" to userAgentFor(platform),
+            "Accept" to "*/*",
             "Connection" to "keep-alive",
         )
         if (!isLocalRelay && roomId.isNotBlank() && roomId != "test") {
-            headers["Referer"] = "https://www.douyu.com/$roomId"
+            refererFor(platform, roomId)?.let { headers["Referer"] = it }
         }
         httpFactory.setDefaultRequestProperties(headers)
+        httpFactory.setUserAgent(userAgentFor(platform))
 
         val itemBuilder = MediaItem.Builder().setUri(url)
         val mediaSource = when {
@@ -170,7 +171,6 @@ class StreamPlayback(
         player.videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT
     }
 
-    /** Relay path: Media3 stays on one URL; log splice stats periodically. */
     private fun startRelayWatchdog() {
         renewJob?.cancel()
         renewJob = scope.launch {
@@ -206,7 +206,7 @@ class StreamPlayback(
         val attempt = consecutiveErrors.incrementAndGet()
         if (attempt <= MAX_ERROR_RETRIES) {
             delay(RETRY_BACKOFF_MS * attempt)
-            if (usingRelay) {
+            if (usingRelay && platform == LivePlatform.DOUYU) {
                 try {
                     val prepared = relayServer.prepare(roomId, quality, line)
                     setMedia(prepared.localUrl, format = "flv", isLocalRelay = true)
@@ -242,5 +242,27 @@ class StreamPlayback(
         const val RENEW_INTERVAL_MS = 240_000L
         const val MAX_ERROR_RETRIES = 3
         const val RETRY_BACKOFF_MS = 1_200L
+
+        private fun userAgentFor(platform: LivePlatform): String =
+            when (platform) {
+                LivePlatform.DOUYU -> DouyuConstants.DESKTOP_UA
+                LivePlatform.HUYA ->
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0"
+                LivePlatform.DOUYIN ->
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                LivePlatform.BILIBILI ->
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+
+        private fun refererFor(platform: LivePlatform, roomId: String): String? =
+            when (platform) {
+                LivePlatform.DOUYU -> "https://www.douyu.com/$roomId"
+                LivePlatform.HUYA -> "https://www.huya.com/$roomId"
+                LivePlatform.DOUYIN -> "https://live.douyin.com/$roomId"
+                // Bilibili HLS typically works without Referer; FLV needs a proxy we skip.
+                LivePlatform.BILIBILI -> "https://live.bilibili.com/$roomId"
+            }
     }
 }

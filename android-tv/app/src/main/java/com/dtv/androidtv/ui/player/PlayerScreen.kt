@@ -53,6 +53,7 @@ import kotlinx.coroutines.delay
 @Composable
 fun PlayerScreen(
     api: DtvApi,
+    platformId: String,
     roomId: String,
     fallbackNickname: String,
     onBack: () -> Unit,
@@ -60,6 +61,7 @@ fun PlayerScreen(
         factory = PlayerViewModel.Factory(
             api = api,
             library = DtvTvApp.instance.libraryStore,
+            platformId = platformId,
             roomId = roomId,
             fallbackNickname = fallbackNickname,
         ),
@@ -73,10 +75,11 @@ fun PlayerScreen(
 
     BackHandler(onBack = onBack)
 
-    val playback = remember {
+    val playback = remember(platformId) {
         StreamPlayback(
             context = context,
             scope = scope,
+            platformId = platformId,
             resolveUrl = { quality, line -> viewModel.resolveFreshUrl(quality, line) },
         )
     }
@@ -174,7 +177,8 @@ fun PlayerScreen(
                 update = { it.player = playback.player },
             )
             // Danmaku sits above video, below chrome / status panels.
-            if (roomId != "test") {
+            // Danmaku overlay is Douyu-only in LT-6/LT-7.
+            if (roomId != "test" && platformId.equals("douyu", ignoreCase = true)) {
                 DanmakuOverlay(
                     messages = state.danmakuMessages,
                     enabled = state.danmakuEnabled,
@@ -235,7 +239,8 @@ fun PlayerScreen(
                     onToggleDanmaku = { viewModel.toggleDanmaku() },
                     onBack = onBack,
                     showFollow = roomId != "test",
-                    showDanmakuToggle = roomId != "test",
+                    showDanmakuToggle = roomId != "test" &&
+                        platformId.equals("douyu", ignoreCase = true),
                 )
             }
         }
