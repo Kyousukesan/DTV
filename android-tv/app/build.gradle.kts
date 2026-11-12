@@ -76,6 +76,18 @@ android {
                 "dtv.liveMultiPlatformSmoke",
                 System.getProperty("dtv.liveMultiPlatformSmoke") ?: "",
             )
+            it.systemProperty(
+                "dtv.liveMultiDanmakuSmoke",
+                System.getProperty("dtv.liveMultiDanmakuSmoke") ?: "",
+            )
+            it.systemProperty(
+                "dtv.liveMultiDanmakuRooms",
+                System.getProperty("dtv.liveMultiDanmakuRooms") ?: "",
+            )
+            it.systemProperty(
+                "dtv.huyaWsProbe",
+                System.getProperty("dtv.huyaWsProbe") ?: "",
+            )
         }
     }
 }
@@ -111,6 +123,8 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.7.0")
     // Encode large on-screen QR for Douyu / Bilibili TV login.
     implementation("com.google.zxing:core:3.5.3")
+    // Douyin WS signature: execute assets/douyin/sign.js get_sign (Go uses goja).
+    implementation("org.mozilla:rhino:1.7.15")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 

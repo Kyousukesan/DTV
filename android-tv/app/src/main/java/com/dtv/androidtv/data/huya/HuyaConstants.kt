@@ -31,6 +31,9 @@ internal object HuyaConstants {
         "https://mp.huya.com/cache.php?m=Live&do=profileRoom&roomid=%s&showSecret=1"
     const val URL_WUP = "http://wup.huya.com"
 
+    /** Danmaku WebSocket gateway (Go `urlDanmakuWS`). */
+    const val URL_DANMAKU_WS = "wss://cdnws.api.huya.com"
+
     const val WUP_SERVANT = "liveui"
     const val WUP_FUNC = "getCdnTokenInfoEx"
     const val WUP_APP_ID = 66

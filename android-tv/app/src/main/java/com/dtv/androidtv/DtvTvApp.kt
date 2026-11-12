@@ -3,6 +3,7 @@ package com.dtv.androidtv
 import android.app.Application
 import com.dtv.androidtv.data.PlatformCatalog
 import com.dtv.androidtv.data.auth.AuthStore
+import com.dtv.androidtv.data.douyin.DouyinWsSign
 import com.dtv.androidtv.data.library.LibraryStore
 import kotlin.concurrent.thread
 
@@ -20,6 +21,7 @@ class DtvTvApp : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        DouyinWsSign.appContext = this
         platforms = PlatformCatalog()
         libraryStore = LibraryStore(this)
         authStore = AuthStore(this)
