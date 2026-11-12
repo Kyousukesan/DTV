@@ -23,6 +23,14 @@ internal object DouyuConstants {
     const val URL_CATE_LIST = "https://m.douyu.com/api/cate/list"
     const val URL_DIRECTORY = "https://www.douyu.com/gapi/rkc/directory/%s/%d?limit=%d"
 
+    /** Passport QR login (Go `qrlogin.go`). */
+    const val URL_QR_GENERATE = "https://passport.douyu.com/scan/generateCode"
+    const val URL_QR_CHECK = "https://passport.douyu.com/japi/scan/auth"
+    const val URL_SAFE_AUTH =
+        "https://passport.douyu.com/lapi/passport/iframe/safeAuth?client_id=1"
+    const val QR_LOGIN_REFERER =
+        "https://passport.douyu.com/index/login?type=login&client_id=1"
+
     /** Known public HLS sample for Media3 smoke when Douyu is unreachable. */
     const val TEST_HLS_URL =
         "https://devstreaming-cdn.apple.com/videos/streaming/examples/" +

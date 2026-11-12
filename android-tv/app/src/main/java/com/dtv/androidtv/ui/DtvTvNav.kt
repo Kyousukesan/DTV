@@ -11,9 +11,11 @@ import com.dtv.androidtv.data.PlatformCatalog
 import com.dtv.androidtv.data.model.LivePlatform
 import com.dtv.androidtv.ui.browse.BrowseScreen
 import com.dtv.androidtv.ui.player.PlayerScreen
+import com.dtv.androidtv.ui.settings.SettingsScreen
 
 private object Routes {
     const val BROWSE = "browse"
+    const val SETTINGS = "settings"
     const val PLAYER = "player/{platform}/{roomId}?nickname={nickname}"
 }
 
@@ -37,11 +39,18 @@ fun DtvTvNav(
                         "player/$platform/${room.id}?nickname=${android.net.Uri.encode(room.nickname)}",
                     )
                 },
+                onOpenSettings = { nav.navigate(Routes.SETTINGS) },
                 onPlayTest = {
                     nav.navigate(
                         "player/${LivePlatform.DOUYU.id}/test?nickname=${android.net.Uri.encode("测试流")}",
                     )
                 },
+            )
+        }
+        composable(Routes.SETTINGS) {
+            SettingsScreen(
+                catalog = catalog,
+                onBack = { nav.popBackStack() },
             )
         }
         composable(

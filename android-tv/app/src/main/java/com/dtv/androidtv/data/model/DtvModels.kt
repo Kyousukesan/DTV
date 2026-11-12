@@ -129,3 +129,36 @@ data class DanmakuEvent(
     val platform: String = LivePlatform.DOUYU.id,
     val message: DanmakuMessage,
 )
+
+/** QR content for TV overlay (mirrors Go `QRLoginCode`). */
+data class QRLoginCode(
+    val url: String,
+    val key: String,
+    val expiresIn: Int = 0,
+)
+
+/** QR poll status ids (frontend / Go `QRStatus*`). */
+object QRLoginStatus {
+    const val PENDING = "pending"
+    const val SCANNED = "scanned"
+    const val EXPIRED = "expired"
+    const val SUCCESS = "success"
+    const val ERROR = "error"
+}
+
+/** One QR poll / finish result. */
+data class QRLoginResult(
+    val status: String,
+    val message: String = "",
+    val cookie: String = "",
+    val userName: String = "",
+    val avatar: String = "",
+)
+
+/** Cached account row for Settings. */
+data class AuthAccount(
+    val platform: String,
+    val loggedIn: Boolean,
+    val userName: String = "",
+    val avatar: String = "",
+)
