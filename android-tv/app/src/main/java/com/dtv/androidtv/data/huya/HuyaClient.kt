@@ -22,8 +22,9 @@ import kotlin.random.Random
 /**
  * Kotlin contract-port of Go `internal/platforms/huya.Client`.
  *
- * Scope: static categories, live list, room card, FLV stream resolve (WUP token + anti-code).
- * Danmaku / search intentionally omitted.
+ * Scope: static categories, live list, room card, FLV stream resolve (WUP token + anti-code),
+ * and danmaku channel-id resolution for WS subscribe.
+ * Search intentionally omitted.
  */
 class HuyaClient(
     private val http: HttpJsonClient = HttpJsonClient(),
@@ -156,6 +157,14 @@ class HuyaClient(
         val bitRateInfo: String,
         val candidates: List<StreamCandidate>,
         val flvRates: List<Int>,
+        /** Raw `baseSteamInfoList[0].lChannelId` (pre CDN-sort) — preferred danmaku subscribe uid. */
+        val baseStreamChannelId: Long = 0L,
+        /** `liveData.channel` fallback. */
+        val liveChannel: Long = 0L,
+        /** `liveData.uid` fallback. */
+        val liveUid: Long = 0L,
+        /** `profileInfo.yyid` — last resort before roomId (yyid alone yields almost no chat). */
+        val yyid: Long = 0L,
     )
 
     /** Light room card (`Streamer` / `FetchRoomInfo`). */
@@ -238,6 +247,30 @@ class HuyaClient(
         return assembleStreamUrl(selected, token, ratio)
     }
 
+    /**
+     * Resolve the WS subscribe uid for danmaku (Go `buildRegPayload`).
+     *
+     * Prefer **channel ID**, not yyid:
+     * `baseSteamInfoList[0].lChannelId` → `liveData.channel` → `liveData.uid` →
+     * `profileInfo.yyid` → numeric roomId.
+     */
+    fun resolveDanmakuChannelId(roomId: String): Long {
+        require(roomId.isNotBlank()) { "缺少房间号" }
+        val data = fetchProfile(roomId.trim())
+        var ayyuid = data.baseStreamChannelId
+        if (ayyuid == 0L) {
+            ayyuid = data.candidates.firstOrNull()?.channelId ?: 0L
+        }
+        if (ayyuid == 0L) ayyuid = data.liveChannel
+        if (ayyuid == 0L) ayyuid = data.liveUid
+        if (ayyuid == 0L) ayyuid = data.yyid
+        if (ayyuid == 0L) ayyuid = roomId.trim().toLongOrNull() ?: 0L
+        if (ayyuid == 0L) {
+            throw IllegalStateException("无法确定虎牙频道 ID（房间 $roomId）")
+        }
+        return ayyuid
+    }
+
     // ---- profileRoom ------------------------------------------------------
 
     private fun fetchProfile(roomId: String): ProfileData {
@@ -275,6 +308,9 @@ class HuyaClient(
             liveData.optString("avatar180"),
         )
         val bitRateInfo = liveData.optString("bitRateInfo")
+        val liveChannel = JsonUtil.asLong(liveData.opt("channel"))
+        val liveUid = JsonUtil.asLong(liveData.opt("uid"))
+        val yyid = JsonUtil.asLong(profileInfo.opt("yyid"))
         val flvRates = mutableListOf<Int>()
         stream?.optJSONObject("flv")?.optJSONArray("rateArray")?.let { arr ->
             for (i in 0 until arr.length()) {
@@ -283,18 +319,24 @@ class HuyaClient(
                 if (br > 0) flvRates += br
             }
         }
+        val (candidates, baseChannelId) = parseCandidates(stream)
         return ProfileData(
             title = title,
             nickname = nick.ifEmpty { "房间 $roomId" },
             avatar = avatar,
             bitRateInfo = bitRateInfo,
-            candidates = parseCandidates(stream),
+            candidates = candidates,
             flvRates = flvRates,
+            baseStreamChannelId = baseChannelId,
+            liveChannel = liveChannel,
+            liveUid = liveUid,
+            yyid = yyid,
         )
     }
 
-    private fun parseCandidates(stream: JSONObject?): List<StreamCandidate> {
-        if (stream == null) return emptyList()
+    /** Returns CDN-sorted candidates plus raw first-entry channel id for danmaku. */
+    private fun parseCandidates(stream: JSONObject?): Pair<List<StreamCandidate>, Long> {
+        if (stream == null) return emptyList<StreamCandidate>() to 0L
         // Typo "baseSteamInfoList" is Huya's own spelling.
         val list = stream.optJSONArray("baseSteamInfoList") ?: JSONArray()
         var fallbackUid = 0L
@@ -319,7 +361,7 @@ class HuyaClient(
                 flvAntiCode = item.optString("sFlvAntiCode"),
             )
         }
-        return out.sortedBy { cdnPriority(it.cdnType) }
+        return out.sortedBy { cdnPriority(it.cdnType) } to fallbackUid
     }
 
     // ---- WUP token + anti-code --------------------------------------------

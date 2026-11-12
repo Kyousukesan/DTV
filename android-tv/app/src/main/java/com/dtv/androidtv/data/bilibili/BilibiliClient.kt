@@ -28,8 +28,8 @@ import kotlin.math.max
  * Kotlin contract-port of Go `internal/platforms/bilibili.Client`.
  *
  * Scope: categories, live list (w_webid + list sign), room_init / getInfoByRoom,
- * getRoomPlayInfo → **HLS only**, Web QR login + cookie session.
- * Danmaku intentionally omitted.
+ * getRoomPlayInfo → **HLS only**, Web QR login + cookie session,
+ * and WBI-signed [danmuInfo] for live danmaku bootstrap.
  *
  * Risk note: list API code **-352** means captcha / stale `w_webid`. We scrape
  * `access_id` from live HTML, cache ~30m, and force-refresh + retry once on -352.
@@ -424,6 +424,12 @@ class BilibiliClient(
         val uname: String,
     )
 
+    /** Token + deduped WSS hosts from getDanmuInfo. */
+    data class DanmuInfoResult(
+        val token: String,
+        val hosts: List<String>,
+    )
+
     private data class RoomInfoData(
         val title: String,
         val nickname: String,
@@ -457,6 +463,47 @@ class BilibiliClient(
             title = data.optString("title"),
             uname = data.optString("uname"),
         )
+    }
+
+    /**
+     * WBI-signed getDanmuInfo → WS auth token + host list.
+     * Hosts are deduped in response order (same host may appear with different ports).
+     */
+    fun danmuInfo(realRoomId: String): DanmuInfoResult {
+        val trimmed = realRoomId.trim()
+        require(trimmed.isNotEmpty()) { "房间号为空" }
+        val (imgKey, subKey) = wbiKeys()
+        val query = BilibiliSign.wbiSignedQuery(
+            listOf(
+                "id" to trimmed,
+                "type" to "0",
+                "web_location" to "444.8",
+            ),
+            imgKey,
+            subKey,
+            BilibiliSign.nowSeconds(),
+        )
+        val payload = getJson(BilibiliSign.buildUrl(BilibiliConstants.URL_DANMU_INFO, query))
+        if (payload.optLong("code") != 0L) {
+            throw BilibiliApiException(
+                code = payload.optLong("code"),
+                apiMessage = payload.optString("msg").ifEmpty { payload.optString("message") },
+                endpoint = "getDanmuInfo",
+            )
+        }
+        val data = payload.optJSONObject("data") ?: JSONObject()
+        val token = data.optString("token")
+        val hostList = data.optJSONArray("host_list") ?: JSONArray()
+        val seen = linkedSetOf<String>()
+        val hosts = mutableListOf<String>()
+        for (i in 0 until hostList.length()) {
+            val item = hostList.optJSONObject(i) ?: continue
+            val host = item.optString("host").trim()
+            if (host.isEmpty() || host in seen) continue
+            seen += host
+            hosts += host
+        }
+        return DanmuInfoResult(token = token, hosts = hosts)
     }
 
     private fun fetchRoomInfoData(roomId: String): RoomInfoData {

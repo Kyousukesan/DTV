@@ -105,6 +105,15 @@ internal class TarsWriter {
         data.forEach { buf += it }
     }
 
+    /** TARS `list<string>` — used by danmaku subscribe topics. */
+    fun writeStringList(tag: Int, list: List<String>) {
+        putHead(tag, HuyaTars.T_LIST)
+        writeInt32(0, list.size)
+        for (item in list) {
+            writeString(0, item)
+        }
+    }
+
     fun writeEmptyMap(tag: Int) {
         putHead(tag, HuyaTars.T_MAPS)
         writeInt32(0, 0)
@@ -238,6 +247,16 @@ internal class TarsReader(private val buf: ByteArray) {
         return intFromHead(head, def)
     }
 
+    /** Consume an integer field as Long (needed to drain HuyaUser tags before content). */
+    fun readInt64Tag(tag: Int, def: Long): Long {
+        val head = try {
+            find(tag)
+        } catch (_: Exception) {
+            return def
+        }
+        return longFromHead(head, def)
+    }
+
     fun readInt32(tag: Int, def: Int): Int {
         val head = try {
             takeHead()
@@ -252,10 +271,16 @@ internal class TarsReader(private val buf: ByteArray) {
     }
 
     private fun intFromHead(head: TarsHead, def: Int): Int {
+        val v = longFromHead(head, def.toLong())
+        lastSize = v.toInt()
+        return v.toInt()
+    }
+
+    private fun longFromHead(head: TarsHead, def: Long): Long {
         val v: Long = when (head.typ) {
             HuyaTars.T_ZERO -> {
                 lastSize = 0
-                return 0
+                return 0L
             }
             HuyaTars.T_INT8 -> {
                 if (pos + 1 > buf.size) return def
@@ -290,7 +315,7 @@ internal class TarsReader(private val buf: ByteArray) {
             else -> return def
         }
         lastSize = v.toInt()
-        return v.toInt()
+        return v
     }
 
     fun readStringTag(tag: Int, def: String): String {

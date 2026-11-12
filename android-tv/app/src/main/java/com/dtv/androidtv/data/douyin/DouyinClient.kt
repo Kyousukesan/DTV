@@ -101,10 +101,39 @@ class DouyinClient(
         }
     }
 
-    private fun cookieHeader(): String =
+    /** Cookie jar as `k=v; k2=v2` (Go `cookieString`) — needed for danmaku WSS dial. */
+    fun cookieString(): String =
         synchronized(cookieLock) {
             if (cookies.isEmpty()) "" else cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
         }
+
+    private fun cookieHeader(): String = cookieString()
+
+    /**
+     * Resolve web_rid → internal room id + cookie for danmaku WS
+     * (Go `danmakuSession.resolveCredentials`).
+     */
+    fun resolveDanmakuCredentials(roomId: String): DouyinDanmakuCredentials {
+        val webRid = normalizeRoomId(roomId)
+        if (webRid.isEmpty()) throw IllegalArgumentException("抖音房间号无效: \"$roomId\"")
+        val html = fetchRoomPage(webRid)
+        val internalId = extractInternalRoomId(html)
+        if (internalId.isEmpty()) {
+            throw IllegalStateException("抖音房间 $webRid 页面里没有找到内部 roomId")
+        }
+        val cookie = cookieString()
+        // Prefer s_v_web_id. Avoid ttwid (contains `|`) as user_unique_id — OkHttp
+        // percent-encodes it and Douyin WS often replies HTTP 200 instead of 101.
+        // Fall back to millis like Go when s_v_web_id is absent.
+        var userUniqueId = extractCookieValue(cookie, "s_v_web_id")
+        if (userUniqueId.isEmpty()) userUniqueId = System.currentTimeMillis().toString()
+        return DouyinDanmakuCredentials(
+            webRid = webRid,
+            roomId = internalId,
+            userUniqueId = userUniqueId,
+            cookie = cookie,
+        )
+    }
 
     // ---- Categories (static embed) ----------------------------------------
 
@@ -317,7 +346,8 @@ class DouyinClient(
         return RoomBundle(webRid, internalId, room)
     }
 
-    private fun fetchRoomPage(webRid: String): String {
+    /** Room H5 HTML (also refreshes ttwid). Exposed for danmaku credential resolve. */
+    fun fetchRoomPage(webRid: String): String {
         val target = DouyinConstants.URL_LIVE_HOME + webRid
         val headers = mutableMapOf(
             "User-Agent" to DouyinConstants.DESKTOP_UA,
@@ -611,6 +641,14 @@ class DouyinClient(
 
     companion object {
         private const val TAG = "Douyin"
+
+        fun extractCookieValue(cookie: String, key: String): String {
+            for (kv in cookie.split(';')) {
+                val part = kv.trim()
+                if (part.startsWith("$key=")) return part.removePrefix("$key=")
+            }
+            return ""
+        }
 
         private val roomIdPatterns = listOf(
             Regex("""\\"roomId\\":\\"(\d{10,})\\""""),

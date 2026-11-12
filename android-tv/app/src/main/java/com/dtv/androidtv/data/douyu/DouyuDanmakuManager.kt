@@ -1,5 +1,6 @@
 package com.dtv.androidtv.data.douyu
 
+import com.dtv.androidtv.data.danmaku.DanmakuSession
 import com.dtv.androidtv.data.model.DanmakuEvent
 import com.dtv.androidtv.data.model.DanmakuKind
 import com.dtv.androidtv.data.model.DanmakuMessage
@@ -36,7 +37,7 @@ import kotlin.math.min
  */
 class DouyuDanmakuManager(
     private val externalScope: CoroutineScope? = null,
-) {
+) : DanmakuSession {
     private val ownJob = SupervisorJob()
     private val scope = externalScope ?: CoroutineScope(ownJob + Dispatchers.IO)
 
@@ -51,10 +52,10 @@ class DouyuDanmakuManager(
         extraBufferCapacity = 256,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
-    val events: SharedFlow<DanmakuEvent> = _events.asSharedFlow()
+    override val events: SharedFlow<DanmakuEvent> = _events.asSharedFlow()
 
     /** Start listening; stops any previous room first. */
-    suspend fun start(roomId: String) {
+    override suspend fun start(roomId: String) {
         val trimmed = roomId.trim()
         if (trimmed.isEmpty()) return
         mutex.withLock {
@@ -71,7 +72,7 @@ class DouyuDanmakuManager(
     /**
      * Stop. Non-empty [roomId] only stops that room (avoids racing a newer Start).
      */
-    suspend fun stop(roomId: String = "") {
+    override suspend fun stop(roomId: String) {
         val trimmed = roomId.trim()
         mutex.withLock {
             if (runningRoom.isEmpty()) return
@@ -85,10 +86,10 @@ class DouyuDanmakuManager(
         }
     }
 
-    fun runningRoom(): String = runningRoom
+    override fun runningRoom(): String = runningRoom
 
     /** Non-suspend teardown for ViewModel.onCleared. */
-    fun cancelAll() {
+    override fun cancelAll() {
         sessionJob?.cancel()
         sessionJob = null
         runningRoom = ""

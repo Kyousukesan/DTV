@@ -61,6 +61,7 @@ fun PlayerScreen(
         factory = PlayerViewModel.Factory(
             api = api,
             library = DtvTvApp.instance.libraryStore,
+            catalog = DtvTvApp.instance.platforms,
             platformId = platformId,
             roomId = roomId,
             fallbackNickname = fallbackNickname,
@@ -177,8 +178,7 @@ fun PlayerScreen(
                 update = { it.player = playback.player },
             )
             // Danmaku sits above video, below chrome / status panels.
-            // Danmaku overlay is Douyu-only in LT-6/LT-7.
-            if (roomId != "test" && platformId.equals("douyu", ignoreCase = true)) {
+            if (roomId != "test" && state.danmakuSupported) {
                 DanmakuOverlay(
                     messages = state.danmakuMessages,
                     enabled = state.danmakuEnabled,
@@ -239,8 +239,7 @@ fun PlayerScreen(
                     onToggleDanmaku = { viewModel.toggleDanmaku() },
                     onBack = onBack,
                     showFollow = roomId != "test",
-                    showDanmakuToggle = roomId != "test" &&
-                        platformId.equals("douyu", ignoreCase = true),
+                    showDanmakuToggle = roomId != "test" && state.danmakuSupported,
                 )
             }
         }

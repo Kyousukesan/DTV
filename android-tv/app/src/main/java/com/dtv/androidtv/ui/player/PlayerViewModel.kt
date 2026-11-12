@@ -3,8 +3,10 @@ package com.dtv.androidtv.ui.player
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.dtv.androidtv.DtvTvApp
 import com.dtv.androidtv.data.DtvApi
-import com.dtv.androidtv.data.douyu.DouyuDanmakuManager
+import com.dtv.androidtv.data.PlatformCatalog
+import com.dtv.androidtv.data.danmaku.DanmakuSessions
 import com.dtv.androidtv.data.library.LibraryStore
 import com.dtv.androidtv.data.model.DanmakuMessage
 import com.dtv.androidtv.data.model.LivePlatform
@@ -26,32 +28,35 @@ data class PlayerUiState(
     val useTestHls: Boolean = false,
     val followed: Boolean = false,
     val chromeVisible: Boolean = true,
-    /** Overlay visibility; TCP session follows this for live Douyu rooms. */
+    /** Overlay on; WS/TCP session follows when live. */
     val danmakuEnabled: Boolean = true,
-    /** Recent chat messages for the Compose overlay (ring buffer). */
+    /** Platform has a danmaku backend (all four live platforms). */
+    val danmakuSupported: Boolean = false,
     val danmakuMessages: List<DanmakuMessage> = emptyList(),
 )
 
 class PlayerViewModel(
     private val api: DtvApi,
     private val library: LibraryStore,
+    private val catalog: PlatformCatalog,
     private val platformId: String,
     private val roomId: String,
     private val fallbackNickname: String,
 ) : ViewModel() {
     private val platform = LivePlatform.fromId(platformId)
-    private val danmakuEnabledForPlatform = platform == LivePlatform.DOUYU
-    private val danmaku = if (danmakuEnabledForPlatform) {
-        DouyuDanmakuManager(viewModelScope)
+    private val danmaku = if (roomId != "test") {
+        DanmakuSessions.create(platform, viewModelScope, catalog)
     } else {
         null
     }
+    private val danmakuSupported = danmaku != null
 
     private val _state = MutableStateFlow(
         PlayerUiState(
             useTestHls = roomId == "test",
             followed = roomId != "test" && library.isFollowed(platformId, roomId),
-            danmakuEnabled = danmakuEnabledForPlatform && library.isDanmakuEnabled(),
+            danmakuEnabled = danmakuSupported && library.isDanmakuEnabled(),
+            danmakuSupported = danmakuSupported,
         ),
     )
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
@@ -160,9 +165,9 @@ class PlayerViewModel(
         _state.update { it.copy(chromeVisible = !it.chromeVisible) }
     }
 
-    /** DPAD chrome toggle: Douyu-only; persists preference and starts/stops TCP. */
+    /** DPAD chrome toggle; persists preference and starts/stops the platform session. */
     fun toggleDanmaku() {
-        if (!danmakuEnabledForPlatform) return
+        if (!danmakuSupported) return
         val next = !_state.value.danmakuEnabled
         library.setDanmakuEnabled(next)
         _state.update {
@@ -208,7 +213,6 @@ class PlayerViewModel(
 
     private fun pickVariant(variants: List<StreamVariant>): StreamVariant? {
         if (variants.isEmpty()) return null
-        // Prefer mid-ladder over 原画 for anonymous sessions (often gated).
         return variants.firstOrNull { it.id != "0" } ?: variants.first()
     }
 
@@ -228,13 +232,14 @@ class PlayerViewModel(
     class Factory(
         private val api: DtvApi,
         private val library: LibraryStore,
+        private val catalog: PlatformCatalog,
         private val platformId: String,
         private val roomId: String,
         private val fallbackNickname: String,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            PlayerViewModel(api, library, platformId, roomId, fallbackNickname) as T
+            PlayerViewModel(api, library, catalog, platformId, roomId, fallbackNickname) as T
     }
 
     companion object {

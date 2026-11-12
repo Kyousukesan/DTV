@@ -25,6 +25,9 @@ internal object BilibiliConstants {
     const val URL_ROOM_INFO = "https://api.live.bilibili.com/xlive/web-room/v1/index/getInfoByRoom"
     const val URL_ROOM_PLAY_INFO =
         "https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo"
+    /** Danmaku WS token + host_list (WBI-signed). */
+    const val URL_DANMU_INFO =
+        "https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo"
     const val URL_WBI_NAV = "https://api.bilibili.com/x/web-interface/nav"
 
     /** Web QR login (passport) — mirrors Go `qrlogin.go`. */
