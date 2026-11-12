@@ -12,12 +12,14 @@ Kotlin 契约移植桌面端 `DtvApi` / `common` 与 Go `internal/platforms/{dou
 - 播放页 chrome：OK 显控 / 播放暂停、关注切换、Back 退出；未开播 / 错误可读 + 重试
 - Media3：斗鱼 / 虎牙 / 抖音 **FLV**；B 站 **HLS**；测试 HLS
 - **LT-5 FLV 续流**：本地 `127.0.0.1` splice 中继（**仅斗鱼**）；虎牙 / 抖音直连 progressive + quiet re-sign
-- **LT-6 斗鱼弹幕**：TCP STT → Compose 叠加层；chrome **弹幕开/关**（默认开）。其它平台弹幕延后。
-- **LT-8 扫码登录**：斗鱼 / B 站 QR（大屏二维码 + 轮询）；Cookie 存 SharedPreferences；登录后取流走同一 Client 会话（解锁更高清晰度）。虎牙/抖音桌面无账号 QR，本 PR 不做。
+- **LT-6 / LT-9 弹幕**：四平台弹幕会话 + Compose 叠加；chrome **弹幕：开/关**（默认开，可在设置改默认）。
+- **LT-8 扫码登录**：斗鱼 / B 站 QR（大屏二维码 + 轮询）；Cookie 存 SharedPreferences；登录后取流走同一 Client 会话（解锁更高清晰度）。虎牙/抖音桌面无账号 QR。
+- **LT-10 搜索 / 清晰度**：DPAD 搜索；播放页切换清晰度 / 线路（有变体时）。
+- **LT-11 设置与 UI**：专用设置页（账号、弹幕默认、清空关注/最近、关于版本）；10-foot 间距与焦点对比度；播放页文案更清晰。
 
 ## 明确延后
 
-虎牙/抖音/B 站弹幕、搜索/清晰度 UI 深化、局域网同步。
+局域网同步、桌面端导入、虎牙 FLV 本地中继。
 
 ## 平台播放路径
 
@@ -87,7 +89,7 @@ avdmanager create avd -ndtv_tv_api34 -k "system-images;android-34;android-tv;x86
 emulator -avd dtv_tv_api34
 ```
 
-遥控器：方向键浏览分区/房间，OK 进入播放，Back 退出播放回到列表。浏览页「播放测试 HLS」可在无斗鱼网络时验证 Media3。
+遥控器：方向键浏览分区/房间，OK 进入播放，Back 退出播放回到列表。首页 **搜索 / 设置**；测试 HLS 在 **设置 → 关于**。
 
 ## 包结构
 
@@ -103,8 +105,8 @@ app/src/main/java/com/dtv/androidtv/
 
 ## 弹幕开关
 
-播放页 OK 调出 chrome → **弹幕开 / 弹幕关**。默认开启；偏好写入 `dtv_tv_library` SharedPreferences。关闭时断开 TCP 并清空叠加层。
+播放页 OK 调出 chrome → **弹幕：开 / 弹幕：关**。默认开启（设置页可改默认）；偏好写入 `dtv_tv_library` SharedPreferences。关闭时断开会话并清空叠加层。
 
 ## 账号扫码
 
-浏览页右上角 **账号** → 斗鱼 / B 站行 → **扫码登录**。手机 App 扫大屏 QR；成功后 Cookie 写入 `dtv_tv_auth`，冷启动 `safeAuth` / `nav` 校验。退出会清本地会话（B 站顺带调 passport exit）。登录后重新进播放页可拿到更高清晰度档位（斗鱼原画 / B 站更高 qn）。
+首页 **设置** → **账号** → 斗鱼 / B 站行 → **扫码登录**。手机 App 扫大屏 QR；成功后 Cookie 写入 `dtv_tv_auth`，冷启动校验。退出会清本地会话（B 站顺带调 passport exit）。登录后重新进播放页可拿到更高清晰度档位（斗鱼原画 / B 站更高 qn）。
