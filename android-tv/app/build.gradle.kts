@@ -64,6 +64,14 @@ android {
                 "dtv.liveFlvSmokeSeconds",
                 System.getProperty("dtv.liveFlvSmokeSeconds") ?: "320",
             )
+            it.systemProperty(
+                "dtv.liveDanmakuSmoke",
+                System.getProperty("dtv.liveDanmakuSmoke") ?: "",
+            )
+            it.systemProperty(
+                "dtv.liveDanmakuRoom",
+                System.getProperty("dtv.liveDanmakuRoom") ?: "8682569",
+            )
         }
     }
 }

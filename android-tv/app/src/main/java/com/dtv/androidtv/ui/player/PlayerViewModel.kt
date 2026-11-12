@@ -4,7 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.dtv.androidtv.data.DtvApi
+import com.dtv.androidtv.data.douyu.DouyuDanmakuManager
 import com.dtv.androidtv.data.library.LibraryStore
+import com.dtv.androidtv.data.model.DanmakuMessage
 import com.dtv.androidtv.data.model.LivePlatform
 import com.dtv.androidtv.data.model.StreamInfo
 import com.dtv.androidtv.data.model.StreamVariant
@@ -24,6 +26,10 @@ data class PlayerUiState(
     val useTestHls: Boolean = false,
     val followed: Boolean = false,
     val chromeVisible: Boolean = true,
+    /** Overlay visibility; TCP session follows this for live Douyu rooms. */
+    val danmakuEnabled: Boolean = true,
+    /** Recent chat messages for the Compose overlay (ring buffer). */
+    val danmakuMessages: List<DanmakuMessage> = emptyList(),
 )
 
 class PlayerViewModel(
@@ -32,15 +38,27 @@ class PlayerViewModel(
     private val roomId: String,
     private val fallbackNickname: String,
 ) : ViewModel() {
+    private val danmaku = DouyuDanmakuManager(viewModelScope)
+
     private val _state = MutableStateFlow(
         PlayerUiState(
             useTestHls = roomId == "test",
             followed = roomId != "test" && library.isFollowed(roomId),
+            danmakuEnabled = library.isDanmakuEnabled(),
         ),
     )
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
 
     init {
+        viewModelScope.launch {
+            danmaku.events.collect { event ->
+                if (event.roomId != roomId && roomId != "test") return@collect
+                _state.update { ui ->
+                    val next = (ui.danmakuMessages + event.message).takeLast(MAX_DANMAKU_BUFFER)
+                    ui.copy(danmakuMessages = next)
+                }
+            }
+        }
         if (roomId != "test") {
             load()
         } else {
@@ -61,6 +79,7 @@ class PlayerViewModel(
                 val info = api.getStreamInfo(roomId)
                 library.recordRecent(info.toStreamer(fallbackNickname))
                 if (!info.isLive) {
+                    stopDanmakuSession()
                     _state.update {
                         it.copy(
                             loading = false,
@@ -69,6 +88,7 @@ class PlayerViewModel(
                             notLive = true,
                             error = null,
                             chromeVisible = true,
+                            danmakuMessages = emptyList(),
                         )
                     }
                     return@launch
@@ -83,9 +103,12 @@ class PlayerViewModel(
                         error = null,
                         notLive = false,
                         followed = library.isFollowed(info.roomId),
+                        danmakuMessages = emptyList(),
                     )
                 }
+                syncDanmakuSession()
             } catch (e: Exception) {
+                stopDanmakuSession()
                 _state.update {
                     it.copy(
                         loading = false,
@@ -125,6 +148,19 @@ class PlayerViewModel(
         _state.update { it.copy(chromeVisible = !it.chromeVisible) }
     }
 
+    /** DPAD chrome toggle: persists preference and starts/stops TCP. */
+    fun toggleDanmaku() {
+        val next = !_state.value.danmakuEnabled
+        library.setDanmakuEnabled(next)
+        _state.update {
+            it.copy(
+                danmakuEnabled = next,
+                danmakuMessages = if (next) it.danmakuMessages else emptyList(),
+            )
+        }
+        viewModelScope.launch { syncDanmakuSession() }
+    }
+
     suspend fun resolveFreshUrl(quality: String, line: String): String =
         api.getStreamUrl(roomId, quality, line)
 
@@ -134,6 +170,26 @@ class PlayerViewModel(
 
     fun clearError() {
         _state.update { it.copy(error = null) }
+    }
+
+    override fun onCleared() {
+        danmaku.cancelAll()
+        super.onCleared()
+    }
+
+    private suspend fun syncDanmakuSession() {
+        if (roomId == "test") return
+        val ui = _state.value
+        val live = ui.info?.isLive == true && !ui.notLive && ui.error == null
+        if (ui.danmakuEnabled && live) {
+            danmaku.start(roomId)
+        } else {
+            stopDanmakuSession()
+        }
+    }
+
+    private suspend fun stopDanmakuSession() {
+        danmaku.stop(roomId)
     }
 
     private fun pickVariant(variants: List<StreamVariant>): StreamVariant? {
@@ -164,5 +220,9 @@ class PlayerViewModel(
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
             PlayerViewModel(api, library, roomId, fallbackNickname) as T
+    }
+
+    companion object {
+        private const val MAX_DANMAKU_BUFFER = 80
     }
 }
