@@ -49,6 +49,7 @@ import com.dtv.androidtv.ui.components.RoomRow
 fun BrowseScreen(
     catalog: PlatformCatalog,
     onOpenRoom: (Streamer) -> Unit,
+    onOpenSettings: () -> Unit,
     onPlayTest: () -> Unit,
     viewModel: BrowseViewModel = viewModel(
         factory = BrowseViewModel.Factory(catalog, DtvTvApp.instance.libraryStore),
@@ -95,15 +96,27 @@ fun BrowseScreen(
                     color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),
                 )
             }
-            Surface(
-                onClick = onPlayTest,
-                scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
-            ) {
-                Text(
-                    text = "播放测试 HLS",
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-                    style = MaterialTheme.typography.labelLarge,
-                )
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Surface(
+                    onClick = onOpenSettings,
+                    scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
+                ) {
+                    Text(
+                        text = "账号",
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                }
+                Surface(
+                    onClick = onPlayTest,
+                    scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
+                ) {
+                    Text(
+                        text = "播放测试 HLS",
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                }
             }
         }
 

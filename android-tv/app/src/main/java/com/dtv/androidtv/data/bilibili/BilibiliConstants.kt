@@ -27,6 +27,38 @@ internal object BilibiliConstants {
         "https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo"
     const val URL_WBI_NAV = "https://api.bilibili.com/x/web-interface/nav"
 
+    /** Web QR login (passport) — mirrors Go `qrlogin.go`. */
+    const val URL_QR_GENERATE =
+        "https://passport.bilibili.com/x/passport-login/web/qrcode/generate"
+    const val URL_QR_POLL =
+        "https://passport.bilibili.com/x/passport-login/web/qrcode/poll"
+    const val URL_LOGIN_NAV = "https://api.bilibili.com/x/web-interface/nav"
+    const val URL_LOGOUT = "https://passport.bilibili.com/login/exit/v2"
+
+    /** Match web header source on poll to reduce risk control false positives. */
+    const val QR_POLL_SOURCE = "main-fe-header"
+
+    /** Official QR TTL (seconds). */
+    const val QR_EXPIRES_IN_SEC = 180
+
+    /** www origin for passport QR / logout (not live subdomain). */
+    const val WWW_REFERER = "https://www.bilibili.com/"
+    const val WWW_ORIGIN = "https://www.bilibili.com"
+
+    /**
+     * Cookie key order when assembling the login Cookie header
+     * (SESSDATA / bili_jct first for debugging).
+     */
+    val COOKIE_KEY_ORDER = listOf(
+        "SESSDATA",
+        "bili_jct",
+        "DedeUserID",
+        "DedeUserID__ckMd5",
+        "sid",
+        "buvid3",
+        "buvid4",
+    )
+
     /** Pages that may embed `access_id` (→ w_webid). SSR is flaky; try several. */
     val W_WEBID_PAGES = listOf(
         "https://live.bilibili.com/lol",

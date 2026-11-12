@@ -1,17 +1,25 @@
 package com.dtv.androidtv.data.douyu
 
+import android.util.Log
+import com.dtv.androidtv.data.model.AuthAccount
 import com.dtv.androidtv.data.model.Category
 import com.dtv.androidtv.data.model.CategoryGroup
 import com.dtv.androidtv.data.model.LineOption
 import com.dtv.androidtv.data.model.LivePlatform
+import com.dtv.androidtv.data.model.QRLoginCode
+import com.dtv.androidtv.data.model.QRLoginResult
+import com.dtv.androidtv.data.model.QRLoginStatus
 import com.dtv.androidtv.data.model.StreamInfo
 import com.dtv.androidtv.data.model.StreamVariant
 import com.dtv.androidtv.data.model.Streamer
 import com.dtv.androidtv.data.model.StreamerPage
 import com.dtv.androidtv.data.net.HttpJsonClient
+import okhttp3.Cookie
+import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLDecoder
+import java.net.URLEncoder
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -20,8 +28,7 @@ import kotlin.math.max
 /**
  * Kotlin contract-port of Go `internal/platforms/douyu.Client`.
  *
- * Slice-1 scope: categories, live list, room detail, stream resolve.
- * Danmaku / QR login intentionally omitted.
+ * Categories, live list, room detail, stream resolve, QR login / cookie session.
  */
 class DouyuClient(
     private val http: HttpJsonClient = HttpJsonClient(),
@@ -36,6 +43,278 @@ class DouyuClient(
     private var enc: EncryptionData? = null
     private var encFetchedAtMs: Long = 0L
     private var encDid: String = ""
+
+    // ---- Cookie session ---------------------------------------------------
+
+    /**
+     * Apply a login Cookie (empty clears session). Syncs `did` from
+     * `dy_did`/`acf_did` and invalidates the encryption descriptor cache
+     * (Go `SetCookie`).
+     */
+    fun setCookie(raw: String) {
+        var trimmed = raw.trim()
+        if (trimmed.startsWith("Cookie:", ignoreCase = true)) {
+            trimmed = trimmed.substring(7).trim()
+        }
+        val fields = parseCookieFields(trimmed)
+        cookie = trimmed
+        val syncedDid = fields["dy_did"]?.takeIf { it.isNotBlank() }
+            ?: fields["acf_did"]?.takeIf { it.isNotBlank() }
+        if (syncedDid != null) {
+            did = syncedDid
+        }
+        synchronized(encLock) {
+            enc = null
+            encFetchedAtMs = 0L
+            encDid = ""
+        }
+        // Go also clears the HTTP jar; OkHttp here has no jar by default.
+    }
+
+    fun cookie(): String = cookie
+
+    /** Local field check only — no network (Go `CookieValid` → AuthAccount). */
+    fun cookieValid(): AuthAccount {
+        val raw = cookie()
+        if (!cookieHasLogin(raw)) {
+            return AuthAccount(platform = LivePlatform.DOUYU.id, loggedIn = false)
+        }
+        return AuthAccount(
+            platform = LivePlatform.DOUYU.id,
+            loggedIn = true,
+            userName = cookieUserName(raw),
+        )
+    }
+
+    /** Convenience for callers that only need a boolean (e.g. restoreAuth). */
+    fun isLoggedIn(): Boolean = cookieHasLogin(cookie())
+
+    fun loginUserName(): String = cookieUserName(cookie())
+
+    /**
+     * Passport `safeAuth` renewal. On transport/parse failure throws but leaves
+     * the prior cookie in place (caller may still read [cookie]).
+     */
+    fun refreshCookie(): String {
+        val full = fullCookie()
+        if (!cookieHasLogin(full)) {
+            throw IllegalStateException("斗鱼未登录")
+        }
+        val headers = mapOf(
+            "accept" to "application/json, text/plain, */*",
+            "accept-language" to "zh-CN,zh;q=0.9,en;q=0.7",
+            "referer" to "https://www.douyu.com/directory/myFollow",
+            "user-agent" to DouyuConstants.DESKTOP_UA,
+            "x-requested-with" to "XMLHttpRequest",
+            "cookie" to full,
+        )
+        val (body, setCookies) = try {
+            http.get(DouyuConstants.URL_SAFE_AUTH, headers).use { resp ->
+                if (!resp.isSuccessful) {
+                    throw IllegalStateException("斗鱼 Cookie 续期失败：HTTP ${resp.code}")
+                }
+                resp.body?.string().orEmpty() to cookiesFromResponse(resp)
+            }
+        } catch (e: IllegalStateException) {
+            throw e
+        } catch (e: Exception) {
+            throw IllegalStateException("斗鱼 Cookie 续期失败：${e.message}", e)
+        }
+        val payload = try {
+            JSONObject(body.ifBlank { "{}" })
+        } catch (e: Exception) {
+            throw IllegalStateException("斗鱼 Cookie 续期解析失败：${e.message}", e)
+        }
+        if (payload.optInt("error") != 0) {
+            throw IllegalStateException(
+                "斗鱼 Cookie 续期失败：error=${payload.optInt("error")} (${payload.optString("msg")})",
+            )
+        }
+        val fields = parseCookieFields(cookie()).toMutableMap()
+        mergeCookieList(fields, setCookies, override = true)
+        if (fields["dy_did"].isNullOrBlank()) fields["dy_did"] = did
+        if (fields["acf_did"].isNullOrBlank()) fields["acf_did"] = did
+        val renewed = buildCookieString(fields, LOGIN_COOKIE_ORDER)
+        if (cookieHasLogin(renewed)) {
+            setCookie(renewed)
+            return renewed
+        }
+        throw IllegalStateException("斗鱼 Cookie 续期后登录字段丢失")
+    }
+
+    fun clearCookie() = setCookie("")
+
+    fun logout() = clearCookie()
+
+    // ---- QR login ---------------------------------------------------------
+
+    /** Request a Douyu login QR payload (Go `QRLoginGenerate`). */
+    fun qrLoginGenerate(): QRLoginCode {
+        val form = mapOf(
+            "client_id" to "1",
+            "isMultiAccount" to "0",
+        )
+        http.postForm(DouyuConstants.URL_QR_GENERATE, form, qrHeaders()).use { resp ->
+            val body = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) {
+                throw IllegalStateException("申请斗鱼登录二维码失败：HTTP ${resp.code}")
+            }
+            val payload = JSONObject(body.ifBlank { "{}" })
+            if (payload.optInt("error") != 0) {
+                throw IllegalStateException(
+                    "申请斗鱼登录二维码失败：error=${payload.optInt("error")} (${payload.optString("msg")})",
+                )
+            }
+            val data = payload.optJSONObject("data")
+                ?: throw IllegalStateException("斗鱼未返回有效的二维码内容")
+            val code = data.optString("code").trim()
+            val url = data.optString("url").trim()
+            if (code.isEmpty() || url.isEmpty()) {
+                throw IllegalStateException("斗鱼未返回有效的二维码内容")
+            }
+            var expire = data.optInt("expire")
+            if (expire <= 0) expire = 300
+            return QRLoginCode(url = url, key = code, expiresIn = expire)
+        }
+    }
+
+    /** One poll of scan status; on confirm, finishes login callback (Go `QRLoginPoll`). */
+    fun qrLoginPoll(key: String): QRLoginResult {
+        val code = key.trim()
+        if (code.isEmpty()) throw IllegalArgumentException("缺少扫码 code")
+        val target =
+            "${DouyuConstants.URL_QR_CHECK}?time=${System.currentTimeMillis()}&code=" +
+                URLEncoder.encode(code, Charsets.UTF_8.name())
+        http.get(target, qrHeaders()).use { resp ->
+            val pollCookies = cookiesFromResponse(resp)
+            val body = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) {
+                throw IllegalStateException("查询斗鱼扫码状态失败：HTTP ${resp.code}")
+            }
+            val payload = JSONObject(body.ifBlank { "{}" })
+            val message = stringFromQrData(payload.opt("data"))
+            return when (payload.optInt("error")) {
+                0 -> {
+                    val data = payload.optJSONObject("data")
+                    val loginPath = data?.optString("url").orEmpty().trim()
+                    if (data == null) {
+                        QRLoginResult(
+                            status = QRLoginStatus.ERROR,
+                            message = "斗鱼登录返回了无法识别的数据",
+                        )
+                    } else if (loginPath.isEmpty()) {
+                        QRLoginResult(
+                            status = QRLoginStatus.ERROR,
+                            message = "斗鱼登录未返回回调地址",
+                        )
+                    } else {
+                        finishLogin(loginPath, pollCookies)
+                    }
+                }
+                1 -> QRLoginResult(
+                    status = QRLoginStatus.SCANNED,
+                    message = firstNonEmpty(message, payload.optString("msg"), "已扫码，请在手机上确认登录"),
+                )
+                -2 -> QRLoginResult(
+                    status = QRLoginStatus.PENDING,
+                    message = firstNonEmpty(message, payload.optString("msg"), "等待手机扫码"),
+                )
+                -1 -> QRLoginResult(
+                    status = QRLoginStatus.EXPIRED,
+                    message = firstNonEmpty(message, payload.optString("msg"), "二维码已失效，请刷新"),
+                )
+                9993, 9995, 9997, 9999 -> QRLoginResult(
+                    status = QRLoginStatus.ERROR,
+                    message = firstNonEmpty(message, "斗鱼扫码登录失败"),
+                )
+                else -> QRLoginResult(
+                    status = QRLoginStatus.PENDING,
+                    message = firstNonEmpty(message, payload.optString("msg"), "等待手机扫码"),
+                )
+            }
+        }
+    }
+
+    private fun finishLogin(rawUrl: String, pollCookies: List<Cookie>): QRLoginResult {
+        val loginUrl = buildLoginCallbackUrl(rawUrl, System.currentTimeMillis())
+        http.get(loginUrl, qrHeaders()).use { resp ->
+            val setCookies = cookiesFromResponse(resp)
+            val body = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) {
+                throw IllegalStateException("斗鱼登录回调失败：HTTP ${resp.code}")
+            }
+            val payload = parseJsonpObject(body)
+            if (payload.optInt("error") != 0) {
+                return QRLoginResult(
+                    status = QRLoginStatus.ERROR,
+                    message = firstNonEmpty(
+                        stringFromQrData(payload.opt("msg")),
+                        "斗鱼登录失败",
+                    ),
+                )
+            }
+            val fields = linkedMapOf<String, String>()
+            mergeCookieList(fields, pollCookies, override = false)
+            mergeCookieList(fields, setCookies, override = true)
+            // Go also merges jar cookies for www / passport; no jar here.
+            if (fields["dy_did"].isNullOrBlank()) fields["dy_did"] = did
+            if (fields["acf_did"].isNullOrBlank()) fields["acf_did"] = did
+            val cookieStr = buildCookieString(fields, LOGIN_COOKIE_ORDER)
+            if (!cookieHasLogin(cookieStr)) {
+                return QRLoginResult(
+                    status = QRLoginStatus.ERROR,
+                    message = "斗鱼登录成功但未拿到有效 Cookie，请重试",
+                )
+            }
+            setCookie(cookieStr)
+            var result = QRLoginResult(
+                status = QRLoginStatus.SUCCESS,
+                message = "登录成功",
+                cookie = cookieStr,
+            )
+            val data = payload.optJSONObject("data")
+            if (data != null) {
+                result = result.copy(
+                    userName = firstNonEmpty(
+                        stringFromQrData(data.opt("nickname")),
+                        stringFromQrData(data.opt("nickName")),
+                        stringFromQrData(data.opt("nick_name")),
+                        stringFromQrData(data.opt("username")),
+                        stringFromQrData(data.opt("userName")),
+                    ),
+                    avatar = firstNonEmpty(
+                        stringFromQrData(data.opt("avatar")),
+                        stringFromQrData(data.opt("avatar_url")),
+                        stringFromQrData(data.opt("avatarUrl")),
+                    ),
+                )
+            }
+            if (result.userName.isEmpty()) {
+                result = result.copy(userName = cookieUserName(cookieStr))
+            }
+            try {
+                val refreshed = refreshCookie()
+                if (refreshed.isNotEmpty()) {
+                    result = result.copy(cookie = refreshed)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "登录后校验失败（仍按成功处理）: ${e.message}")
+            }
+            return result
+        }
+    }
+
+    private fun qrHeaders(): Map<String, String> {
+        val authDid = did
+        return mapOf(
+            "accept" to "application/json, text/plain, */*",
+            "accept-language" to "zh-CN,zh;q=0.9,en;q=0.7",
+            "origin" to "https://passport.douyu.com",
+            "referer" to DouyuConstants.QR_LOGIN_REFERER,
+            "user-agent" to DouyuConstants.DESKTOP_UA,
+            "cookie" to "dy_did=$authDid; acf_did=$authDid",
+        )
+    }
 
     // ---- Categories -------------------------------------------------------
 
@@ -611,24 +890,67 @@ class DouyuClient(
         )
     }
 
+    /** Full cookie for passport refresh (includes LTP0). */
+    private fun fullCookie(): String {
+        val fields = parseCookieFields(cookie).toMutableMap()
+        fields["dy_did"] = did
+        fields["acf_did"] = did
+        return buildCookieString(
+            fields,
+            listOf("dy_auth", "acf_auth", "acf_jwt_token", "dy_did", "acf_did", "LTP0"),
+        )
+    }
+
     private fun requestCookie(requestDid: String): String {
         val fields = parseCookieFields(cookie).toMutableMap()
         fields.remove("LTP0")
         val h5Session = !fields["acf_auth"].isNullOrBlank() && !fields["acf_jwt_token"].isNullOrBlank()
+        if (h5Session) {
+            val filtered = linkedMapOf(
+                "dy_did" to requestDid,
+                "acf_did" to requestDid,
+            )
+            fields.forEach { (name, value) ->
+                if (value.isEmpty() || name == "dy_did" || name == "acf_did") return@forEach
+                if (name.startsWith("acf_")) {
+                    filtered[name] = value
+                }
+            }
+            return buildCookieString(
+                filtered,
+                listOf(
+                    "dy_did", "acf_did",
+                    "acf_auth", "acf_jwt_token",
+                    "acf_uid", "acf_stk", "acf_username", "acf_nickname",
+                ),
+            )
+        }
         val filtered = linkedMapOf(
             "dy_did" to requestDid,
             "acf_did" to requestDid,
         )
-        if (h5Session) {
-            fields.forEach { (name, value) ->
-                if (value.isNotEmpty() && name.startsWith("acf_") && name != "acf_did") {
-                    filtered[name] = value
-                }
-            }
-        } else {
-            fields["dy_auth"]?.takeIf { it.isNotBlank() }?.let { filtered["dy_auth"] = it }
+        fields["dy_auth"]?.takeIf { it.isNotBlank() }?.let { filtered["dy_auth"] = it }
+        return buildCookieString(filtered, listOf("dy_did", "acf_did", "dy_auth"))
+    }
+
+    private fun cookiesFromResponse(response: Response): List<Cookie> {
+        val url = response.request.url
+        return response.headers("Set-Cookie").mapNotNull { header ->
+            Cookie.parse(url, header)
         }
-        return filtered.entries.joinToString("; ") { "${it.key}=${it.value}" }
+    }
+
+    private fun mergeCookieList(
+        dst: MutableMap<String, String>,
+        cookies: List<Cookie>,
+        override: Boolean,
+    ) {
+        for (ck in cookies) {
+            if (ck.name.isEmpty() || ck.value.isEmpty()) continue
+            if (ck.domain.isNotEmpty() && !ck.domain.lowercase().contains("douyu.com")) continue
+            if (!override && dst.containsKey(ck.name)) continue
+            dst[ck.name] = ck.value
+        }
     }
 
     // ---- Misc helpers -----------------------------------------------------
@@ -689,6 +1011,13 @@ class DouyuClient(
     }
 
     companion object {
+        private const val TAG = "DouyuClient"
+
+        private val LOGIN_COOKIE_ORDER = listOf(
+            "dy_auth", "acf_auth", "acf_jwt_token", "dy_did", "acf_did",
+            "LTP0", "acf_uid", "acf_stk", "acf_username",
+        )
+
         fun generateDeviceId(): String =
             try {
                 UUID.randomUUID().toString().replace("-", "")
@@ -717,6 +1046,63 @@ class DouyuClient(
                     if (name.isEmpty()) null else name to value
                 }.toMap()
         }
+
+        /** `(acf_auth && acf_jwt_token) || dy_auth` (Go `cookieHasLogin`). */
+        fun cookieHasLogin(raw: String): Boolean {
+            val fields = parseCookieFields(raw)
+            val h5 = !fields["acf_auth"].isNullOrBlank() &&
+                !fields["acf_jwt_token"].isNullOrBlank()
+            return h5 || !fields["dy_auth"].isNullOrBlank()
+        }
+
+        fun cookieUserName(raw: String): String = decodeCookieNickname(raw)
+
+        fun buildCookieString(fields: Map<String, String>, order: List<String>): String {
+            val parts = mutableListOf<String>()
+            val seen = mutableSetOf<String>()
+            for (name in order) {
+                val value = fields[name]
+                if (!value.isNullOrEmpty()) {
+                    parts += "$name=$value"
+                    seen += name
+                }
+            }
+            val rest = fields
+                .filter { (name, value) -> name !in seen && value.isNotEmpty() }
+                .toSortedMap()
+                .map { (name, value) -> "$name=$value" }
+            parts += rest
+            return parts.joinToString("; ")
+        }
+
+        fun buildLoginCallbackUrl(raw: String, nowMs: Long): String {
+            var login = raw.trim()
+            login = when {
+                login.startsWith("//") -> "https:$login"
+                login.startsWith("http://") || login.startsWith("https://") -> login
+                else -> "https://passport.douyu.com/" + login.trimStart('/')
+            }
+            val separator = if (login.contains('?')) "&" else "?"
+            return "$login${separator}callback=appClient_json_callback&_=$nowMs"
+        }
+
+        fun parseJsonpObject(body: String): JSONObject {
+            val start = body.indexOf('{')
+            val end = body.lastIndexOf('}')
+            if (start < 0 || end < start) {
+                throw IllegalStateException("响应不是 JSON/JSONP 对象")
+            }
+            return JSONObject(body.substring(start, end + 1))
+        }
+
+        fun stringFromQrData(value: Any?): String =
+            when (value) {
+                null, JSONObject.NULL -> ""
+                is String -> value.trim()
+                is Number -> value.toString()
+                is Boolean -> value.toString()
+                else -> value.toString().trim()
+            }
 
         fun douyuAvatarUrl(raw: String): String {
             val full = JsonUtil.fullUrl(DouyuConstants.AVATAR_PREFIX, raw)

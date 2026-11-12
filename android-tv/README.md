@@ -13,10 +13,11 @@ Kotlin 契约移植桌面端 `DtvApi` / `common` 与 Go `internal/platforms/{dou
 - Media3：斗鱼 / 虎牙 / 抖音 **FLV**；B 站 **HLS**；测试 HLS
 - **LT-5 FLV 续流**：本地 `127.0.0.1` splice 中继（**仅斗鱼**）；虎牙 / 抖音直连 progressive + quiet re-sign
 - **LT-6 斗鱼弹幕**：TCP STT → Compose 叠加层；chrome **弹幕开/关**（默认开）。其它平台弹幕延后。
+- **LT-8 扫码登录**：斗鱼 / B 站 QR（大屏二维码 + 轮询）；Cookie 存 SharedPreferences；登录后取流走同一 Client 会话（解锁更高清晰度）。虎牙/抖音桌面无账号 QR，本 PR 不做。
 
 ## 明确延后
 
-扫码登录、虎牙/抖音/B 站弹幕、局域网同步。
+虎牙/抖音/B 站弹幕、搜索/清晰度 UI 深化、局域网同步。
 
 ## 平台播放路径
 
@@ -103,3 +104,7 @@ app/src/main/java/com/dtv/androidtv/
 ## 弹幕开关
 
 播放页 OK 调出 chrome → **弹幕开 / 弹幕关**。默认开启；偏好写入 `dtv_tv_library` SharedPreferences。关闭时断开 TCP 并清空叠加层。
+
+## 账号扫码
+
+浏览页右上角 **账号** → 斗鱼 / B 站行 → **扫码登录**。手机 App 扫大屏 QR；成功后 Cookie 写入 `dtv_tv_auth`，冷启动 `safeAuth` / `nav` 校验。退出会清本地会话（B 站顺带调 passport exit）。登录后重新进播放页可拿到更高清晰度档位（斗鱼原画 / B 站更高 qn）。

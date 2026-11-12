@@ -5,6 +5,9 @@ import com.dtv.androidtv.data.model.Category
 import com.dtv.androidtv.data.model.CategoryGroup
 import com.dtv.androidtv.data.model.LineOption
 import com.dtv.androidtv.data.model.LivePlatform
+import com.dtv.androidtv.data.model.QRLoginCode
+import com.dtv.androidtv.data.model.QRLoginResult
+import com.dtv.androidtv.data.model.QRLoginStatus
 import com.dtv.androidtv.data.model.StreamInfo
 import com.dtv.androidtv.data.model.StreamVariant
 import com.dtv.androidtv.data.model.Streamer
@@ -12,6 +15,10 @@ import com.dtv.androidtv.data.model.StreamerPage
 import com.dtv.androidtv.data.net.HttpJsonClient
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.URI
+import java.net.URLDecoder
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
@@ -21,11 +28,12 @@ import kotlin.math.max
  * Kotlin contract-port of Go `internal/platforms/bilibili.Client`.
  *
  * Scope: categories, live list (w_webid + list sign), room_init / getInfoByRoom,
- * getRoomPlayInfo → **HLS only**. QR login / danmaku intentionally omitted.
+ * getRoomPlayInfo → **HLS only**, Web QR login + cookie session.
+ * Danmaku intentionally omitted.
  *
  * Risk note: list API code **-352** means captcha / stale `w_webid`. We scrape
  * `access_id` from live HTML, cache ~30m, and force-refresh + retry once on -352.
- * Persistent -352 usually needs a real browser cookie (out of scope here).
+ * A real SESSDATA cookie (via [setCookie] / QR login) improves resilience.
  */
 class BilibiliClient(
     private val http: HttpJsonClient = HttpJsonClient(),
@@ -39,6 +47,188 @@ class BilibiliClient(
     private var wbiSub: String = ""
     private var wbiAtMs: Long = 0L
     private var wbiErr: Exception? = null
+
+    /**
+     * Browser Cookie string from QR login (`SESSDATA=…; bili_jct=…; …`).
+     * Empty means anonymous — headers fall back to `buvid3=i;`.
+     */
+    @Volatile
+    private var cookie: String = ""
+
+    /** Apply login Cookie (empty clears session). Mirrors Go `SetCookie`. */
+    fun setCookie(raw: String) {
+        cookie = raw.trim()
+        // Go also clears the HTTP cookie jar; OkHttp here has no jar by default.
+    }
+
+    /** Current login Cookie, or empty when anonymous. */
+    fun cookie(): String = cookie
+
+    // ---- QR login ---------------------------------------------------------
+
+    /**
+     * Account snapshot from `/x/web-interface/nav` (mirrors Go `BilibiliProfile`).
+     * [loggedIn]=false is normal when anonymous / expired — not an error.
+     */
+    data class Profile(
+        val loggedIn: Boolean,
+        val userName: String = "",
+        val avatar: String = "",
+    )
+
+    /** Request a Web QR login payload (`url` + `qrcode_key`). */
+    fun qrLoginGenerate(): QRLoginCode {
+        http.get(BilibiliConstants.URL_QR_GENERATE, qrLoginHeaders()).use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw IllegalStateException("申请登录二维码失败: HTTP ${response.code}")
+            }
+            val payload = JSONObject(body.ifBlank { "{}" })
+            if (payload.optInt("code") != 0) {
+                throw IllegalStateException(
+                    "申请登录二维码失败: code=${payload.optInt("code")} " +
+                        "(${payload.optString("message")})",
+                )
+            }
+            val data = payload.optJSONObject("data") ?: JSONObject()
+            val url = data.optString("url").trim()
+            val key = data.optString("qrcode_key").trim()
+            if (url.isEmpty() || key.isEmpty()) {
+                throw IllegalStateException("申请登录二维码失败: 上游未返回二维码内容")
+            }
+            return QRLoginCode(
+                url = url,
+                key = key,
+                expiresIn = BilibiliConstants.QR_EXPIRES_IN_SEC,
+            )
+        }
+    }
+
+    /**
+     * One poll of QR scan state. On success merges Set-Cookie + `data.url` query
+     * into an ordered Cookie string, applies via [setCookie], and fills profile.
+     */
+    fun qrLoginPoll(key: String): QRLoginResult {
+        val trimmed = key.trim()
+        require(trimmed.isNotEmpty()) { "缺少 qrcode_key" }
+
+        val target = BilibiliConstants.URL_QR_POLL +
+            "?qrcode_key=${urlEncode(trimmed)}" +
+            "&source=${BilibiliConstants.QR_POLL_SOURCE}"
+
+        http.get(target, qrLoginHeaders()).use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw IllegalStateException("查询扫码状态失败: HTTP ${response.code}")
+            }
+            val payload = JSONObject(body.ifBlank { "{}" })
+            if (payload.optInt("code") != 0) {
+                throw IllegalStateException(
+                    "查询扫码状态失败: code=${payload.optInt("code")} " +
+                        "(${payload.optString("message")})",
+                )
+            }
+            val data = payload.optJSONObject("data") ?: JSONObject()
+            return when (data.optInt("code")) {
+                0 -> {
+                    val collected = linkedMapOf<String, String>()
+                    mergeSetCookies(collected, response.headers("Set-Cookie"))
+                    mergeCookieQuery(collected, data.optString("url"))
+                    val built = buildCookieString(collected)
+                    if (built.isEmpty()) {
+                        return QRLoginResult(
+                            status = QRLoginStatus.ERROR,
+                            message = "登录成功但没拿到 Cookie，请重试",
+                        )
+                    }
+                    setCookie(built)
+                    var result = QRLoginResult(
+                        status = QRLoginStatus.SUCCESS,
+                        cookie = built,
+                        message = "登录成功",
+                    )
+                    runCatching { loginProfile() }.getOrNull()?.let { profile ->
+                        if (profile.loggedIn) {
+                            result = result.copy(
+                                userName = profile.userName,
+                                avatar = profile.avatar,
+                            )
+                        }
+                    }
+                    result
+                }
+                86101 -> QRLoginResult(
+                    status = QRLoginStatus.PENDING,
+                    message = "等待手机扫码",
+                )
+                86090 -> QRLoginResult(
+                    status = QRLoginStatus.SCANNED,
+                    message = "已扫码，请在手机上确认登录",
+                )
+                86038 -> QRLoginResult(
+                    status = QRLoginStatus.EXPIRED,
+                    message = "二维码已失效，请刷新",
+                )
+                else -> QRLoginResult(
+                    status = QRLoginStatus.ERROR,
+                    message = "未知的扫码状态：${data.optInt("code")} ${data.optString("message")}",
+                )
+            }
+        }
+    }
+
+    /**
+     * Validate current Cookie via nav; returns [Profile.loggedIn]=false when
+     * anonymous or expired (not an error).
+     */
+    fun loginProfile(): Profile {
+        val payload = getJson(BilibiliConstants.URL_LOGIN_NAV)
+        val data = payload.optJSONObject("data") ?: JSONObject()
+        if (payload.optInt("code") != 0 || !data.optBoolean("isLogin")) {
+            return Profile(loggedIn = false)
+        }
+        return Profile(
+            loggedIn = true,
+            userName = data.optString("uname"),
+            avatar = httpsUrl(data.optString("face")),
+        )
+    }
+
+    /**
+     * Server-side logout via passport `exit/v2` (needs `bili_jct` as CSRF), then
+     * clear local Cookie. Local clear always runs even if the POST fails.
+     */
+    fun logout() {
+        val current = cookie()
+        val csrf = cookieValue(current, "bili_jct")
+        var logoutErr: Exception? = null
+        if (current.isNotEmpty() && csrf.isNotEmpty()) {
+            val headers = headers().toMutableMap()
+            headers["Referer"] = BilibiliConstants.WWW_REFERER
+            headers["Origin"] = BilibiliConstants.WWW_ORIGIN
+            try {
+                http.postForm(
+                    BilibiliConstants.URL_LOGOUT,
+                    mapOf("biliCSRF" to csrf),
+                    headers,
+                ).use { response ->
+                    val body = response.body?.string().orEmpty()
+                    val payload = JSONObject(body.ifBlank { "{}" })
+                    val code = payload.optInt("code")
+                    // -101 = already logged out — treat as OK (matches Go).
+                    if (code != 0 && code != -101) {
+                        logoutErr = IllegalStateException(
+                            "退出登录失败: code=$code (${payload.optString("message")})",
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                logoutErr = e
+            }
+        }
+        setCookie("")
+        if (logoutErr != null) throw logoutErr!!
+    }
 
     // ---- Categories -------------------------------------------------------
 
@@ -671,12 +861,27 @@ class BilibiliClient(
 
     // ---- HTTP helpers -----------------------------------------------------
 
-    private fun headers(): Map<String, String> = mapOf(
+    private fun headers(): Map<String, String> {
+        var cookieHeader = cookie()
+        if (cookieHeader.isEmpty()) {
+            cookieHeader = "buvid3=i;"
+        } else if (!cookieHeader.contains("buvid3=")) {
+            // Device fingerprint for risk control; missing → some APIs 412.
+            if (!cookieHeader.endsWith(";")) cookieHeader += ";"
+            cookieHeader += " buvid3=i;"
+        }
+        return mapOf(
+            "User-Agent" to BilibiliConstants.DESKTOP_UA,
+            "Referer" to BilibiliConstants.REFERER,
+            "Origin" to BilibiliConstants.ORIGIN,
+            "Cookie" to cookieHeader,
+        )
+    }
+
+    private fun qrLoginHeaders(): Map<String, String> = mapOf(
         "User-Agent" to BilibiliConstants.DESKTOP_UA,
-        "Referer" to BilibiliConstants.REFERER,
-        "Origin" to BilibiliConstants.ORIGIN,
-        // Anonymous placeholder; real SESSDATA/buvid3 improve -352 resilience (QR skipped).
-        "Cookie" to "buvid3=i;",
+        "Referer" to BilibiliConstants.WWW_REFERER,
+        "Origin" to BilibiliConstants.WWW_ORIGIN,
     )
 
     private fun getJson(url: String): JSONObject = http.getJson(url, headers())
@@ -692,6 +897,105 @@ class BilibiliClient(
     }
 
     companion object {
+        /** True when Cookie has both SESSDATA and bili_jct (login-ready). */
+        fun cookieHasLogin(raw: String): Boolean {
+            var hasSess = false
+            var hasJct = false
+            for (part in raw.split(';')) {
+                val name = part.trim().substringBefore('=').trim()
+                when (name) {
+                    "SESSDATA" -> hasSess = true
+                    "bili_jct" -> hasJct = true
+                }
+            }
+            return hasSess && hasJct
+        }
+
+        fun cookieValue(raw: String, name: String): String {
+            for (part in raw.split(';')) {
+                val trimmed = part.trim()
+                val eq = trimmed.indexOf('=')
+                if (eq <= 0) continue
+                if (trimmed.substring(0, eq).trim() == name) {
+                    return trimmed.substring(eq + 1).trim()
+                }
+            }
+            return ""
+        }
+
+        /**
+         * Merge `Set-Cookie` headers into [dst] (first wins). Skips cookies whose
+         * Domain is set and does not contain bilibili.com.
+         */
+        fun mergeSetCookies(dst: MutableMap<String, String>, setCookieHeaders: List<String>) {
+            for (header in setCookieHeaders) {
+                val segments = header.split(';')
+                if (segments.isEmpty()) continue
+                val nv = segments[0]
+                val eq = nv.indexOf('=')
+                if (eq <= 0) continue
+                val name = nv.substring(0, eq).trim()
+                val value = nv.substring(eq + 1).trim()
+                if (name.isEmpty()) continue
+                var domain = ""
+                for (i in 1 until segments.size) {
+                    val attr = segments[i].trim()
+                    val attrEq = attr.indexOf('=')
+                    if (attrEq <= 0) continue
+                    if (attr.substring(0, attrEq).trim().equals("Domain", ignoreCase = true)) {
+                        domain = attr.substring(attrEq + 1).trim()
+                    }
+                }
+                if (domain.isNotEmpty() && !domain.contains("bilibili.com")) continue
+                if (name !in dst) dst[name] = value
+            }
+        }
+
+        /** Pull Cookie fields from the login-success callback URL query. */
+        fun mergeCookieQuery(dst: MutableMap<String, String>, rawUrl: String) {
+            if (rawUrl.isBlank()) return
+            try {
+                val uri = URI(rawUrl)
+                val query = uri.rawQuery ?: return
+                for (pair in query.split('&')) {
+                    if (pair.isEmpty()) continue
+                    val eq = pair.indexOf('=')
+                    val rawName = if (eq < 0) pair else pair.substring(0, eq)
+                    val rawValue = if (eq < 0) "" else pair.substring(eq + 1)
+                    if (rawName.isEmpty() || rawValue.isEmpty()) continue
+                    val name = URLDecoder.decode(rawName, StandardCharsets.UTF_8.name())
+                    val value = URLDecoder.decode(rawValue, StandardCharsets.UTF_8.name())
+                    if (name !in dst) dst[name] = value
+                }
+            } catch (_: Exception) {
+                // Malformed callback URL — ignore (matches Go).
+            }
+        }
+
+        /** Fixed-order Cookie header; leftover keys sorted for stability. */
+        fun buildCookieString(cookies: Map<String, String>): String {
+            if (cookies.isEmpty()) return ""
+            val parts = mutableListOf<String>()
+            val seen = mutableSetOf<String>()
+            for (name in BilibiliConstants.COOKIE_KEY_ORDER) {
+                val v = cookies[name]
+                if (!v.isNullOrEmpty()) {
+                    parts += "$name=$v"
+                    seen += name
+                }
+            }
+            val rest = mutableListOf<String>()
+            for ((name, v) in cookies) {
+                if (name in seen || v.isEmpty()) continue
+                rest += "$name=$v"
+            }
+            rest.sort()
+            parts += rest
+            return parts.joinToString("; ")
+        }
+
+        private fun urlEncode(value: String): String =
+            URLEncoder.encode(value, StandardCharsets.UTF_8.name())
         private val areaCacheLock = Any()
         @Volatile private var areaCache: List<CategoryGroup>? = null
         @Volatile private var areaCachedAtMs: Long = 0L

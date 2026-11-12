@@ -33,17 +33,25 @@ class HttpJsonClient(
         }
     }
 
-    fun postFormJson(
+    fun postForm(
         url: String,
         form: Map<String, String>,
         headers: Map<String, String> = emptyMap(),
-    ): JSONObject {
+    ): Response {
         val formBody = FormBody.Builder().apply {
             form.forEach { (k, v) -> add(k, v) }
         }.build()
         val builder = Request.Builder().url(url).post(formBody)
         headers.forEach { (k, v) -> builder.header(k, v) }
-        client.newCall(builder.build()).execute().use { response ->
+        return client.newCall(builder.build()).execute()
+    }
+
+    fun postFormJson(
+        url: String,
+        form: Map<String, String>,
+        headers: Map<String, String> = emptyMap(),
+    ): JSONObject {
+        postForm(url, form, headers).use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
                 throw IOException("HTTP ${response.code}: ${body.take(200)}")
