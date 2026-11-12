@@ -98,7 +98,7 @@ fun PlayerScreen(
         onDispose { playback.release() }
     }
 
-    LaunchedEffect(state.selected, state.useTestHls) {
+    LaunchedEffect(state.selected, state.selectedLineId, state.useTestHls) {
         when {
             state.useTestHls -> playback.playTestHls()
             state.selected != null -> {
@@ -109,15 +109,23 @@ fun PlayerScreen(
                     url = v.url,
                     format = v.format,
                     quality = v.id,
-                    line = info?.lines?.firstOrNull()?.id.orEmpty(),
+                    line = state.selectedLineId.ifBlank {
+                        info?.lines?.firstOrNull()?.id.orEmpty()
+                    },
                 )
             }
         }
     }
 
     // Auto-hide chrome while playing (DPAD / OK brings it back).
-    LaunchedEffect(state.chromeVisible, state.error, state.notLive, state.loading) {
-        if (state.chromeVisible && state.error == null && !state.notLive && !state.loading) {
+    LaunchedEffect(state.chromeVisible, state.error, state.notLive, state.loading, state.switching) {
+        if (
+            state.chromeVisible &&
+            state.error == null &&
+            !state.notLive &&
+            !state.loading &&
+            !state.switching
+        ) {
             delay(4_000)
             viewModel.setChromeVisible(false)
         }
@@ -187,10 +195,10 @@ fun PlayerScreen(
             }
         }
 
-        if (state.loading) {
+        if (state.loading || state.switching) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    "正在解析直播流…",
+                    if (state.switching) "正在切换线路…" else "正在解析直播流…",
                     color = Color.White,
                     style = MaterialTheme.typography.titleLarge,
                 )
@@ -219,16 +227,24 @@ fun PlayerScreen(
                 )
             }
             state.chromeVisible -> {
+                val qualityText = state.selected?.let { "${it.label} · ${it.format.uppercase()}" }
+                val lineText = state.lineLabel
                 PlayerChrome(
                     nickname = state.info?.nickname
                         ?: if (state.useTestHls) "测试流" else fallbackNickname,
                     title = state.info?.title
                         ?: if (state.useTestHls) "Media3 测试 HLS" else "",
-                    qualityLabel = state.selected?.let { "${it.label} · ${it.format.uppercase()}" },
+                    qualityLabel = listOfNotNull(qualityText, lineText?.let { "线路 $it" })
+                        .joinToString(" · ")
+                        .ifBlank { null },
                     followed = state.followed,
                     danmakuEnabled = state.danmakuEnabled,
                     playPauseFocus = playPauseFocus,
                     isPlaying = isPlaying,
+                    canCycleQuality = state.canCycleQuality,
+                    canCycleLine = state.canCycleLine,
+                    qualityButtonLabel = state.selected?.label?.let { "清晰度 $it" } ?: "清晰度",
+                    lineButtonLabel = state.lineLabel?.let { "线路 $it" } ?: "线路",
                     onPlayPause = {
                         val p = playback.player
                         if (p.isPlaying) p.pause() else p.play()
@@ -237,6 +253,8 @@ fun PlayerScreen(
                     },
                     onToggleFollow = { viewModel.toggleFollow() },
                     onToggleDanmaku = { viewModel.toggleDanmaku() },
+                    onCycleQuality = { viewModel.cycleQuality() },
+                    onCycleLine = { viewModel.cycleLine() },
                     onBack = onBack,
                     showFollow = roomId != "test",
                     showDanmakuToggle = roomId != "test" && state.danmakuSupported,
@@ -256,9 +274,15 @@ private fun PlayerChrome(
     danmakuEnabled: Boolean,
     playPauseFocus: FocusRequester,
     isPlaying: Boolean,
+    canCycleQuality: Boolean,
+    canCycleLine: Boolean,
+    qualityButtonLabel: String,
+    lineButtonLabel: String,
     onPlayPause: () -> Unit,
     onToggleFollow: () -> Unit,
     onToggleDanmaku: () -> Unit,
+    onCycleQuality: () -> Unit,
+    onCycleLine: () -> Unit,
     onBack: () -> Unit,
     showFollow: Boolean,
     showDanmakuToggle: Boolean,
@@ -332,6 +356,18 @@ private fun PlayerChrome(
                 ChromeButton(
                     label = if (danmakuEnabled) "弹幕开" else "弹幕关",
                     onClick = onToggleDanmaku,
+                )
+            }
+            if (canCycleQuality) {
+                ChromeButton(
+                    label = qualityButtonLabel,
+                    onClick = onCycleQuality,
+                )
+            }
+            if (canCycleLine) {
+                ChromeButton(
+                    label = lineButtonLabel,
+                    onClick = onCycleLine,
                 )
             }
             Spacer(Modifier.weight(1f))

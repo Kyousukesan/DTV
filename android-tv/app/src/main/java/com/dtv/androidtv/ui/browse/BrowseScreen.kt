@@ -50,6 +50,7 @@ fun BrowseScreen(
     catalog: PlatformCatalog,
     onOpenRoom: (Streamer) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenSearch: () -> Unit,
     onPlayTest: () -> Unit,
     viewModel: BrowseViewModel = viewModel(
         factory = BrowseViewModel.Factory(catalog, DtvTvApp.instance.libraryStore),
@@ -97,6 +98,16 @@ fun BrowseScreen(
                 )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Surface(
+                    onClick = onOpenSearch,
+                    scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
+                ) {
+                    Text(
+                        text = "搜索",
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                }
                 Surface(
                     onClick = onOpenSettings,
                     scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),

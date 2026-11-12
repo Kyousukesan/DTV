@@ -23,6 +23,8 @@ data class PlayerUiState(
     val loading: Boolean = true,
     val info: StreamInfo? = null,
     val selected: StreamVariant? = null,
+    /** Active CDN line id (empty when platform has no lines). */
+    val selectedLineId: String = "",
     val error: String? = null,
     val notLive: Boolean = false,
     val useTestHls: Boolean = false,
@@ -33,7 +35,19 @@ data class PlayerUiState(
     /** Platform has a danmaku backend (all four live platforms). */
     val danmakuSupported: Boolean = false,
     val danmakuMessages: List<DanmakuMessage> = emptyList(),
-)
+    /** True while switching line (re-fetch StreamInfo) without leaving the room. */
+    val switching: Boolean = false,
+) {
+    val canCycleQuality: Boolean get() = (info?.variants?.size ?: 0) > 1
+    val canCycleLine: Boolean get() = (info?.lines?.size ?: 0) > 1
+    val lineLabel: String?
+        get() {
+            val lines = info?.lines.orEmpty()
+            if (lines.isEmpty()) return null
+            return lines.firstOrNull { it.id == selectedLineId }?.label
+                ?: lines.firstOrNull()?.label
+        }
+}
 
 class PlayerViewModel(
     private val api: DtvApi,
@@ -108,13 +122,17 @@ class PlayerViewModel(
                     }
                     return@launch
                 }
-                val selected = pickVariant(info.variants)
+                val preferredQuality = _state.value.selected?.id.orEmpty()
+                val selected = pickVariant(info.variants, preferredQuality)
                     ?: throw IllegalStateException("没有可播放清晰度")
+                val lineId = resolveLineId(info, _state.value.selectedLineId)
                 _state.update {
                     it.copy(
                         loading = false,
+                        switching = false,
                         info = info,
                         selected = selected,
+                        selectedLineId = lineId,
                         error = null,
                         notLive = false,
                         followed = library.isFollowed(platformId, info.roomId),
@@ -127,8 +145,95 @@ class PlayerViewModel(
                 _state.update {
                     it.copy(
                         loading = false,
+                        switching = false,
                         error = e.message ?: "取流失败",
                         notLive = false,
+                        chromeVisible = true,
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Cycle clarity using URLs already on [StreamInfo] (desktop quality switch).
+     * Reloads Media3 via [PlayerUiState.selected] change; stays in the room.
+     */
+    fun cycleQuality() {
+        val ui = _state.value
+        val variants = ui.info?.variants.orEmpty()
+        if (variants.size <= 1) return
+        val currentId = ui.selected?.id
+        val idx = variants.indexOfFirst { it.id == currentId }.let { if (it < 0) 0 else it }
+        val next = variants[(idx + 1) % variants.size]
+        if (next.id == currentId && next.url == ui.selected?.url) return
+        _state.update {
+            it.copy(
+                selected = next,
+                chromeVisible = true,
+                error = null,
+            )
+        }
+    }
+
+    /**
+     * Cycle CDN line: re-fetch [DtvApi.getStreamInfo] with the next line id
+     * (desktop line switch), then pick the same quality when still present.
+     */
+    fun cycleLine() {
+        val ui = _state.value
+        val lines = ui.info?.lines.orEmpty()
+        if (lines.size <= 1 || roomId == "test") return
+        val current = ui.selectedLineId
+        val idx = lines.indexOfFirst { it.id == current }.let { if (it < 0) 0 else it }
+        val nextLine = lines[(idx + 1) % lines.size]
+        if (nextLine.id == current && ui.switching) return
+        val keepQuality = ui.selected?.id.orEmpty()
+        viewModelScope.launch {
+            _state.update {
+                it.copy(
+                    switching = true,
+                    chromeVisible = true,
+                    error = null,
+                    selectedLineId = nextLine.id,
+                )
+            }
+            try {
+                val info = api.getStreamInfo(roomId, nextLine.id)
+                if (!info.isLive) {
+                    stopDanmakuSession()
+                    _state.update {
+                        it.copy(
+                            switching = false,
+                            loading = false,
+                            info = info,
+                            selected = null,
+                            notLive = true,
+                            chromeVisible = true,
+                        )
+                    }
+                    return@launch
+                }
+                val selected = pickVariant(info.variants, keepQuality)
+                    ?: throw IllegalStateException("没有可播放清晰度")
+                val lineId = resolveLineId(info, nextLine.id)
+                _state.update {
+                    it.copy(
+                        switching = false,
+                        info = info,
+                        selected = selected,
+                        selectedLineId = lineId,
+                        notLive = false,
+                        error = null,
+                        followed = library.isFollowed(platformId, info.roomId),
+                    )
+                }
+                syncDanmakuSession()
+            } catch (e: Exception) {
+                _state.update {
+                    it.copy(
+                        switching = false,
+                        error = e.message ?: "切换线路失败",
                         chromeVisible = true,
                     )
                 }
@@ -211,9 +316,21 @@ class PlayerViewModel(
         danmaku?.stop(roomId)
     }
 
-    private fun pickVariant(variants: List<StreamVariant>): StreamVariant? {
+    private fun pickVariant(
+        variants: List<StreamVariant>,
+        preferredId: String = "",
+    ): StreamVariant? {
         if (variants.isEmpty()) return null
+        if (preferredId.isNotBlank()) {
+            variants.firstOrNull { it.id == preferredId }?.let { return it }
+        }
         return variants.firstOrNull { it.id != "0" } ?: variants.first()
+    }
+
+    private fun resolveLineId(info: StreamInfo, preferred: String): String {
+        if (info.lines.isEmpty()) return ""
+        if (preferred.isNotBlank() && info.lines.any { it.id == preferred }) return preferred
+        return info.lines.first().id
     }
 
     private fun StreamInfo.toStreamer(fallbackNick: String): Streamer =

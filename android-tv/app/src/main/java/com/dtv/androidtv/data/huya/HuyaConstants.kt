@@ -34,6 +34,10 @@ internal object HuyaConstants {
     /** Danmaku WebSocket gateway (Go `urlDanmakuWS`). */
     const val URL_DANMAKU_WS = "wss://cdnws.api.huya.com"
 
+    /** Anchor search CDN (Go `urlSearch`). */
+    const val URL_SEARCH = "https://search.cdn.huya.com/"
+    const val SEARCH_PAGE_SIZE = 20
+
     const val WUP_SERVANT = "liveui"
     const val WUP_FUNC = "getCdnTokenInfoEx"
     const val WUP_APP_ID = 66

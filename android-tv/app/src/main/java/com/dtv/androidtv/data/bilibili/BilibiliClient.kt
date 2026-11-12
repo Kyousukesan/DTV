@@ -8,6 +8,7 @@ import com.dtv.androidtv.data.model.LivePlatform
 import com.dtv.androidtv.data.model.QRLoginCode
 import com.dtv.androidtv.data.model.QRLoginResult
 import com.dtv.androidtv.data.model.QRLoginStatus
+import com.dtv.androidtv.data.model.SearchHit
 import com.dtv.androidtv.data.model.StreamInfo
 import com.dtv.androidtv.data.model.StreamVariant
 import com.dtv.androidtv.data.model.Streamer
@@ -552,6 +553,79 @@ class BilibiliClient(
                 JsonUtil.asString(room.opt("short_id")),
             ),
         )
+    }
+
+    /**
+     * Live room keyword search (`SearchRoom`).
+     * Uses search/type?search_type=live (no WBI); strips `<em>` highlight tags.
+     */
+    fun searchRoom(keyword: String, page: Int = 1, pageSize: Int = 40): List<SearchHit> {
+        val text = keyword.trim()
+        if (text.isEmpty()) return emptyList()
+        val safePage = max(1, page)
+        val params = listOf(
+            "context" to "",
+            "search_type" to "live",
+            "cover_type" to "user_cover",
+            "order" to "",
+            "keyword" to text,
+            "category_id" to "",
+            "__refresh__" to "",
+            "_extra" to "",
+            "highlight" to "0",
+            "single_column" to "0",
+            "page" to safePage.toString(),
+        )
+        val query = params.joinToString("&") { (k, v) ->
+            "$k=${BilibiliSign.queryEscape(v)}"
+        }
+        val target = "${BilibiliConstants.URL_SEARCH_TYPE}?$query"
+        val cookieHeader = run {
+            var c = cookie.trim()
+            if (c.isEmpty()) {
+                "buvid3=i;"
+            } else if (!c.contains("buvid3=")) {
+                "$c; buvid3=i;"
+            } else {
+                c
+            }
+        }
+        val payload = http.getJson(
+            target,
+            mapOf(
+                "User-Agent" to BilibiliConstants.DESKTOP_UA,
+                "Referer" to BilibiliConstants.REFERER,
+                "Origin" to BilibiliConstants.ORIGIN,
+                "Cookie" to cookieHeader,
+            ),
+        )
+        if (payload.optLong("code") != 0L) {
+            throw BilibiliApiException(
+                code = payload.optLong("code"),
+                apiMessage = payload.optString("message"),
+                endpoint = "search/type",
+            )
+        }
+        val result = payload.optJSONObject("data")?.optJSONObject("result") ?: JSONObject()
+        var raw = result.optJSONArray("live_room")
+        if (raw == null || raw.length() == 0) {
+            raw = result.optJSONArray("live_user") ?: JSONArray()
+        }
+        val hits = mutableListOf<SearchHit>()
+        for (i in 0 until raw.length()) {
+            val item = raw.optJSONObject(i) ?: continue
+            val roomId = JsonUtil.asString(item.opt("roomid"))
+            if (roomId.isEmpty() || roomId == "0") continue
+            hits += SearchHit(
+                id = roomId,
+                nickname = stripEmTags(JsonUtil.asString(item.opt("uname"))),
+                title = stripEmTags(JsonUtil.asString(item.opt("title"))),
+                avatar = httpsUrl(JsonUtil.asString(item.opt("uface"))),
+                isLive = JsonUtil.asLong(item.opt("live_status")) == 1L,
+            )
+            if (pageSize > 0 && hits.size >= pageSize) break
+        }
+        return hits
     }
 
     /** Card-level room meta for follow / recent refresh (`Streamer`). */

@@ -2,6 +2,7 @@ package com.dtv.androidtv.data.douyin
 
 import com.dtv.androidtv.data.DtvApi
 import com.dtv.androidtv.data.model.CategoryGroup
+import com.dtv.androidtv.data.model.SearchHit
 import com.dtv.androidtv.data.model.StreamInfo
 import com.dtv.androidtv.data.model.Streamer
 import com.dtv.androidtv.data.model.StreamerPage
@@ -26,4 +27,26 @@ class DouyinDtvApi(
 
     override suspend fun getRoomInfo(roomId: String): Streamer =
         withContext(Dispatchers.IO) { client.fetchRoomInfo(roomId) }
+
+    /**
+     * Desktop has no keyword search — treat [keyword] as room id / link and
+     * return 0–1 hit via [getRoomInfo].
+     */
+    override suspend fun search(keyword: String, page: Int): List<SearchHit> =
+        withContext(Dispatchers.IO) {
+            val trimmed = keyword.trim()
+            if (trimmed.isEmpty()) return@withContext emptyList()
+            runCatching {
+                val room = client.fetchRoomInfo(trimmed)
+                listOf(
+                    SearchHit(
+                        id = room.id,
+                        nickname = room.nickname,
+                        title = room.title,
+                        avatar = room.avatar,
+                        isLive = room.isLive,
+                    ),
+                )
+            }.getOrDefault(emptyList())
+        }
 }
