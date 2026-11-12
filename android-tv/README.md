@@ -1,0 +1,82 @@
+# DTV Android TV（Slice-1 · 斗鱼）
+
+本目录是 LIVE-TV 在本 fork 下的 **Android TV 原生客户端**（Compose for TV + Media3），
+Kotlin 契约移植桌面端 `DtvApi` / `common` 与 Go `internal/platforms/douyu`。
+**不**嵌入 Wails/React。
+
+## 范围（已实现）
+
+- Android TV / Leanback launcher、DPAD 友好分区浏览 → 选房间 → 全屏播放
+- Media3 播放：斗鱼 FLV（Progressive + 内置 FlvExtractor）+ 测试 HLS 兜底
+- 斗鱼：分区列表、直播间列表、`getH5PlayV1` 取流；`expire=0` 补丁 + ~240s 重签续流
+- 错误态重试、系统 Back 返回浏览
+
+## 明确延后
+
+弹幕、扫码登录、虎牙/抖音/B 站、局域网同步、桌面级 FLV 字节拼接中继。
+
+## Douyu 播放路径说明
+
+| 步骤 | 行为 |
+| --- | --- |
+| 列表 | `m.douyu.com/api/cate/list` + `gapi/rkc/directory/2_{cate2}/{page}` |
+| 房间 | `www.douyu.com/betard/{roomId}` |
+| 取流 | `websec/getEncryption` → POST `lapi/live/getH5PlayV1/{roomId}` |
+| 格式 | **几乎总是 FLV**（`format=flv`）。若 URL 含 `.m3u8` 则走 HLS |
+| ~300s 掐线 | 保留 Go 的 `expire=300&fcdn=ws` → `&expire=0`；播放器每 ~240s 重新 `streamUrl` 并切换 MediaItem；出错再重签。完整本地 FLV splice 中继留待后续 |
+
+## 环境要求
+
+- JDK 17+
+- Android SDK（`compileSdk`/`targetSdk` 35，`minSdk` 24）
+- 建议：Android TV 模拟器（API 30+）或带 Leanback 的真机
+
+在 `android-tv/local.properties` 写入（勿提交）：
+
+```properties
+sdk.dir=/path/to/Android/Sdk
+```
+
+## 构建
+
+```bash
+cd android-tv
+./gradlew :app:assembleDebug
+```
+
+APK：`app/build/outputs/apk/debug/app-debug.apk`（`applicationId` 带 `.debug` 后缀）。
+
+Release：
+
+```bash
+./gradlew :app:assembleRelease
+```
+
+## 安装到 TV 模拟器 / 设备
+
+```bash
+# 启动 TV AVD 后：
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb shell am start -n com.dtv.androidtv.debug/com.dtv.androidtv.MainActivity
+```
+
+创建 AVD（示例）：
+
+```bash
+sdkmanager "system-images;android-34;android-tv;x86"
+avdmanager create avd -ndtv_tv_api34 -k "system-images;android-34;android-tv;x86" -d "tv_1080p"
+emulator -avd dtv_tv_api34
+```
+
+遥控器：方向键浏览分区/房间，OK 进入播放，Back 退出播放回到列表。浏览页「播放测试 HLS」可在无斗鱼网络时验证 Media3。
+
+## 包结构
+
+```
+app/src/main/java/com/dtv/androidtv/
+  data/model/          # common / DtvApi 契约
+  data/douyu/          # Douyu Kotlin 移植
+  data/DtvApi.kt
+  player/              # Media3 + FLV 重签
+  ui/browse|player/    # Compose for TV
+```
