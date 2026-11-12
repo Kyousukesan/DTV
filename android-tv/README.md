@@ -9,11 +9,12 @@ Kotlin 契约移植桌面端 `DtvApi` / `common` 与 Go `internal/platforms/douy
 - Android TV / Leanback launcher、DPAD 友好浏览 → 选房间 → 全屏播放
 - **M3 首页行**：关注 / 最近观看（本地 SharedPreferences）+ 分区直播行；行内 `focusRestorer` 焦点记忆；overscan safe padding
 - 播放页 chrome：OK 显控 / 播放暂停、关注切换、Back 退出；未开播 / 错误可读 + 重试
-- Media3：斗鱼 FLV + 测试 HLS；`expire=0` + ~240s 重签；错误退避重试（无完整 splice 中继）
+- Media3：斗鱼 FLV + 测试 HLS
+- **LT-5 FLV 续流**：本地 `127.0.0.1` splice 中继（移植桌面 `StreamRelayService` / `flv_relay`）：到期前预取新签名直链，在 FLV tag/关键帧边界拼接；Media3 只播一条本地 URL。失败时仍保留 quiet re-sign + 错误退避兜底。
 
 ## 明确延后
 
-弹幕、扫码登录、虎牙/抖音/B 站、局域网同步、桌面级 FLV 字节拼接中继。
+弹幕、扫码登录、虎牙/抖音/B 站、局域网同步。
 
 ## Douyu 播放路径说明
 
@@ -23,7 +24,18 @@ Kotlin 契约移植桌面端 `DtvApi` / `common` 与 Go `internal/platforms/douy
 | 房间 | `www.douyu.com/betard/{roomId}` |
 | 取流 | `websec/getEncryption` → POST `lapi/live/getH5PlayV1/{roomId}` |
 | 格式 | **几乎总是 FLV**（`format=flv`）。若 URL 含 `.m3u8` 则走 HLS |
-| ~300s 掐线 | `expire=0` 补丁；~240s 静默重签；播放错误最多 3 次退避后重签再抛 UI。完整 FLV splice 中继仍延后 |
+| ~300s 掐线 | **本地 FLV splice 中继**（`DouyuFlvRelayServer` + `relayFlv`）：~295s 预取新直链；CDN EOF 时 `eof_renew`，或边沿 TCP 不掐时在 TTL 主动 `ttl_rotate`；丢新段文件头/seq header，从越过时间轴的关键帧接上；`expire=0` 仍保留。中继失败时回退 MediaItem re-sign。 |
+
+## 续流验证
+
+```bash
+cd android-tv
+./gradlew :app:testDebugUnitTest --tests com.dtv.androidtv.player.FlvRelayTest
+# 可选：真实斗鱼跑过一个 CDN 周期（约 320s）
+./gradlew :app:testDebugUnitTest --tests com.dtv.androidtv.player.LiveFlvContinuitySmokeTest \
+  -Ddtv.liveFlvSmoke=true -Ddtv.liveFlvSmokeSeconds=320
+# 日志：app/build/reports/live-flv-continuity.log
+```
 
 ## 环境要求
 

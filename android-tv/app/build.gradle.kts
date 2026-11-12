@@ -51,6 +51,21 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+
+    testOptions {
+        unitTests.isIncludeAndroidResources = false
+        unitTests.all {
+            // Forward -Ddtv.liveFlvSmoke=true into the test JVM for optional live smoke.
+            it.systemProperty(
+                "dtv.liveFlvSmoke",
+                System.getProperty("dtv.liveFlvSmoke") ?: "",
+            )
+            it.systemProperty(
+                "dtv.liveFlvSmokeSeconds",
+                System.getProperty("dtv.liveFlvSmokeSeconds") ?: "320",
+            )
+        }
+    }
 }
 
 dependencies {
@@ -84,4 +99,10 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.7.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
+    // Real org.json + Robolectric so DouyuClient / OkHttp live smoke can run on JVM.
+    testImplementation("org.json:json:20240303")
+    testImplementation("org.robolectric:robolectric:4.14.1")
 }

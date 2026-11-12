@@ -88,6 +88,9 @@ fun PlayerScreen(
             viewModel.setChromeVisible(false)
         }
         playback.onIsPlayingChanged = { playing -> isPlaying = playing }
+        playback.onRelayEvent = { event ->
+            android.util.Log.i("PlayerScreen", "flv-relay: $event")
+        }
         onDispose { playback.release() }
     }
 
