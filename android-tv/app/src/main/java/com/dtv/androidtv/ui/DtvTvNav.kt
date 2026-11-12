@@ -43,11 +43,6 @@ fun DtvTvNav(
                 },
                 onOpenSettings = { nav.navigate(Routes.SETTINGS) },
                 onOpenSearch = { nav.navigate(Routes.SEARCH) },
-                onPlayTest = {
-                    nav.navigate(
-                        "player/${LivePlatform.DOUYU.id}/test?nickname=${android.net.Uri.encode("测试流")}",
-                    )
-                },
             )
         }
         composable(Routes.SEARCH) {
@@ -66,6 +61,11 @@ fun DtvTvNav(
             SettingsScreen(
                 catalog = catalog,
                 onBack = { nav.popBackStack() },
+                onPlayTest = {
+                    nav.navigate(
+                        "player/${LivePlatform.DOUYU.id}/test?nickname=${android.net.Uri.encode("测试流")}",
+                    )
+                },
             )
         }
         composable(

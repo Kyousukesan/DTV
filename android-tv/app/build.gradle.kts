@@ -13,7 +13,7 @@ android {
         minSdk = 24
         targetSdk = 35
         versionCode = 1
-        versionName = "0.1.0-slice1"
+        versionName = "0.2.0-lt11"
         // TV leanback launcher + DPAD; phone install not a Slice-1 goal.
         vectorDrawables.useSupportLibrary = true
     }

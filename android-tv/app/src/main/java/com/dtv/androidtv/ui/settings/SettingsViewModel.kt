@@ -3,8 +3,10 @@ package com.dtv.androidtv.ui.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.dtv.androidtv.BuildConfig
 import com.dtv.androidtv.data.PlatformCatalog
 import com.dtv.androidtv.data.auth.AuthStore
+import com.dtv.androidtv.data.library.LibraryStore
 import com.dtv.androidtv.data.model.AuthAccount
 import com.dtv.androidtv.data.model.LivePlatform
 import com.dtv.androidtv.data.model.QRLoginCode
@@ -23,6 +25,11 @@ import kotlinx.coroutines.withContext
 
 data class SettingsUiState(
     val accounts: List<AuthAccount> = emptyList(),
+    /** Default for new player sessions (LibraryStore). */
+    val danmakuDefaultOn: Boolean = true,
+    val followCount: Int = 0,
+    val recentCount: Int = 0,
+    val versionLabel: String = "",
     val message: String? = null,
 )
 
@@ -40,6 +47,7 @@ data class QrLoginUiState(
 class SettingsViewModel(
     private val catalog: PlatformCatalog,
     private val authStore: AuthStore,
+    private val library: LibraryStore,
 ) : ViewModel() {
     private val _state = MutableStateFlow(SettingsUiState())
     val state: StateFlow<SettingsUiState> = _state.asStateFlow()
@@ -50,14 +58,49 @@ class SettingsViewModel(
     private var pollJob: Job? = null
 
     init {
-        refreshAccounts()
+        refreshAll()
+    }
+
+    fun refreshAll() {
+        _state.update {
+            it.copy(
+                accounts = catalog.loginPlatforms.map { p -> authStore.loadAccount(p) },
+                danmakuDefaultOn = library.isDanmakuEnabled(),
+                followCount = library.followCount(),
+                recentCount = library.recentCount(),
+                versionLabel = buildVersionLabel(),
+            )
+        }
     }
 
     fun refreshAccounts() {
         _state.update {
+            it.copy(accounts = catalog.loginPlatforms.map { p -> authStore.loadAccount(p) })
+        }
+    }
+
+    fun toggleDanmakuDefault() {
+        val next = !_state.value.danmakuDefaultOn
+        library.setDanmakuEnabled(next)
+        _state.update {
             it.copy(
-                accounts = catalog.loginPlatforms.map { p -> authStore.loadAccount(p) },
+                danmakuDefaultOn = next,
+                message = if (next) "新开播房间默认开启弹幕" else "新开播房间默认关闭弹幕",
             )
+        }
+    }
+
+    fun clearFollows() {
+        library.clearFollows()
+        _state.update {
+            it.copy(followCount = 0, message = "已清空关注列表")
+        }
+    }
+
+    fun clearRecent() {
+        library.clearRecent()
+        _state.update {
+            it.copy(recentCount = 0, message = "已清空最近观看")
         }
     }
 
@@ -202,9 +245,19 @@ class SettingsViewModel(
     class Factory(
         private val catalog: PlatformCatalog,
         private val authStore: AuthStore,
+        private val library: LibraryStore,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            SettingsViewModel(catalog, authStore) as T
+            SettingsViewModel(catalog, authStore, library) as T
+    }
+
+    companion object {
+        fun buildVersionLabel(): String {
+            val name = BuildConfig.VERSION_NAME
+            val code = BuildConfig.VERSION_CODE
+            val buildType = BuildConfig.BUILD_TYPE
+            return "DTV for Android TV · v$name ($code · $buildType)"
+        }
     }
 }

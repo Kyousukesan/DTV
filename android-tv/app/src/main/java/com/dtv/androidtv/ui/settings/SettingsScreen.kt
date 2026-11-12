@@ -4,7 +4,6 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,14 +12,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -35,15 +35,24 @@ import com.dtv.androidtv.data.PlatformCatalog
 import com.dtv.androidtv.data.model.AuthAccount
 import com.dtv.androidtv.data.model.LivePlatform
 import com.dtv.androidtv.data.model.QRLoginStatus
+import com.dtv.androidtv.ui.TvActionButton
 import com.dtv.androidtv.ui.TvLayout
+import com.dtv.androidtv.ui.TvScreenBackground
+import com.dtv.androidtv.ui.TvSectionHeader
+import com.dtv.androidtv.ui.TvSettingsRow
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     catalog: PlatformCatalog,
     onBack: () -> Unit,
+    onPlayTest: (() -> Unit)? = null,
     viewModel: SettingsViewModel = viewModel(
-        factory = SettingsViewModel.Factory(catalog, DtvTvApp.instance.authStore),
+        factory = SettingsViewModel.Factory(
+            catalog = catalog,
+            authStore = DtvTvApp.instance.authStore,
+            library = DtvTvApp.instance.libraryStore,
+        ),
     ),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -53,16 +62,7 @@ fun SettingsScreen(
         if (qr != null) viewModel.cancelQr() else onBack()
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    listOf(Color(0xFF0B1020), Color(0xFF16213E), Color(0xFF0B1020)),
-                ),
-            )
-            .padding(TvLayout.ScreenPadding),
-    ) {
+    TvScreenBackground {
         if (qr != null) {
             QrLoginPanel(
                 state = qr!!,
@@ -71,82 +71,140 @@ fun SettingsScreen(
                 onCancel = viewModel::cancelQr,
             )
         } else {
-            Column(modifier = Modifier.fillMaxSize()) {
-                Text("账号设置", style = MaterialTheme.typography.displaySmall)
-                Text(
-                    "扫码登录解锁斗鱼原画 / B 站更高清晰度（虎牙、抖音暂无扫码）",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.75f),
-                    modifier = Modifier.padding(top = 8.dp, bottom = 24.dp),
-                )
-                catalog.loginPlatforms.forEach { platform ->
-                    val account = state.accounts.firstOrNull { it.platform == platform.id }
-                        ?: AuthAccount(platform = platform.id, loggedIn = false)
-                    AccountRow(
-                        title = catalog.label(platform),
-                        account = account,
-                        onLogin = { viewModel.startQrLogin(platform) },
-                        onLogout = { viewModel.logout(platform) },
-                    )
-                    Spacer(Modifier.height(16.dp))
-                }
-                Spacer(Modifier.weight(1f))
-                state.message?.let {
-                    Text(it, color = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.height(12.dp))
-                }
-                Surface(
-                    onClick = onBack,
-                    scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
-                ) {
-                    Text(
-                        "返回",
-                        modifier = Modifier.padding(horizontal = 28.dp, vertical = 14.dp),
-                    )
-                }
-            }
+            SettingsHome(
+                catalog = catalog,
+                state = state,
+                onBack = onBack,
+                onLogin = viewModel::startQrLogin,
+                onLogout = viewModel::logout,
+                onToggleDanmaku = viewModel::toggleDanmakuDefault,
+                onClearFollows = viewModel::clearFollows,
+                onClearRecent = viewModel::clearRecent,
+                onPlayTest = onPlayTest,
+            )
         }
     }
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun AccountRow(
-    title: String,
-    account: AuthAccount,
-    onLogin: () -> Unit,
-    onLogout: () -> Unit,
+private fun SettingsHome(
+    catalog: PlatformCatalog,
+    state: SettingsUiState,
+    onBack: () -> Unit,
+    onLogin: (LivePlatform) -> Unit,
+    onLogout: (LivePlatform) -> Unit,
+    onToggleDanmaku: () -> Unit,
+    onClearFollows: () -> Unit,
+    onClearRecent: () -> Unit,
+    onPlayTest: (() -> Unit)?,
 ) {
-    Surface(
-        onClick = { if (account.loggedIn) onLogout() else onLogin() },
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
-        modifier = Modifier.fillMaxWidth(),
+    val backFocus = remember { FocusRequester() }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(TvLayout.ScreenPadding)
+            .verticalScroll(rememberScrollState()),
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 18.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column {
-                Text(title, style = MaterialTheme.typography.headlineSmall)
+            Column(modifier = Modifier.weight(1f)) {
+                Text("设置", style = MaterialTheme.typography.displaySmall)
                 Text(
-                    if (account.loggedIn) {
-                        "已登录 · ${account.userName.ifBlank { "账号" }}"
-                    } else {
-                        "未登录"
-                    },
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+                    "账号、弹幕默认与本地数据",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.75f),
+                    modifier = Modifier.padding(top = 6.dp),
                 )
             }
-            Text(
-                if (account.loggedIn) "退出登录" else "扫码登录",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
+            TvActionButton(
+                label = "返回",
+                onClick = onBack,
+                modifier = Modifier.focusRequester(backFocus),
             )
         }
+
+        Spacer(Modifier.height(TvLayout.HeaderBottom))
+
+        TvSectionHeader(
+            title = "账号",
+            subtitle = "扫码登录解锁斗鱼原画 / B 站更高清晰度（虎牙、抖音暂无扫码）",
+        )
+        catalog.loginPlatforms.forEach { platform ->
+            val account = state.accounts.firstOrNull { it.platform == platform.id }
+                ?: AuthAccount(platform = platform.id, loggedIn = false)
+            TvSettingsRow(
+                title = catalog.label(platform),
+                subtitle = if (account.loggedIn) {
+                    "已登录 · ${account.userName.ifBlank { "账号" }}"
+                } else {
+                    "未登录 · 遥控器确认后显示二维码"
+                },
+                actionLabel = if (account.loggedIn) "退出" else "扫码登录",
+                onClick = {
+                    if (account.loggedIn) onLogout(platform) else onLogin(platform)
+                },
+            )
+            Spacer(Modifier.height(12.dp))
+        }
+
+        Spacer(Modifier.height(TvLayout.SectionGap))
+        TvSectionHeader(
+            title = "播放偏好",
+            subtitle = "影响新打开的直播间；播放页内仍可临时开关弹幕",
+        )
+        TvSettingsRow(
+            title = "弹幕默认",
+            subtitle = if (state.danmakuDefaultOn) "开启（推荐）" else "关闭",
+            actionLabel = if (state.danmakuDefaultOn) "切换为关" else "切换为开",
+            onClick = onToggleDanmaku,
+        )
+
+        Spacer(Modifier.height(TvLayout.SectionGap + 8.dp))
+        TvSectionHeader(
+            title = "本地数据",
+            subtitle = "仅本机 SharedPreferences，不会同步到桌面端",
+        )
+        TvSettingsRow(
+            title = "清空关注",
+            subtitle = "当前 ${state.followCount} 个关注",
+            actionLabel = if (state.followCount > 0) "清空" else "无数据",
+            onClick = { if (state.followCount > 0) onClearFollows() },
+        )
+        Spacer(Modifier.height(12.dp))
+        TvSettingsRow(
+            title = "清空最近观看",
+            subtitle = "当前 ${state.recentCount} 条记录",
+            actionLabel = if (state.recentCount > 0) "清空" else "无数据",
+            onClick = { if (state.recentCount > 0) onClearRecent() },
+        )
+
+        Spacer(Modifier.height(TvLayout.SectionGap + 8.dp))
+        TvSectionHeader(title = "关于")
+        Text(
+            state.versionLabel,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
+        )
+        Text(
+            "Compose for TV · Media3 · 斗鱼 / 虎牙 / 抖音 / B 站",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+            modifier = Modifier.padding(top = 6.dp),
+        )
+        if (onPlayTest != null) {
+            Spacer(Modifier.height(16.dp))
+            TvActionButton(label = "播放测试 HLS", onClick = onPlayTest)
+        }
+
+        state.message?.let {
+            Spacer(Modifier.height(20.dp))
+            Text(it, color = MaterialTheme.colorScheme.secondary)
+        }
+        Spacer(Modifier.height(24.dp))
     }
 }
 
@@ -159,7 +217,9 @@ private fun QrLoginPanel(
     onCancel: () -> Unit,
 ) {
     Column(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(TvLayout.ScreenPadding),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {

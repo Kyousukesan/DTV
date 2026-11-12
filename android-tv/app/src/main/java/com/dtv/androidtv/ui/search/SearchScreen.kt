@@ -1,6 +1,5 @@
 package com.dtv.androidtv.ui.search
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,8 +27,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -45,7 +42,11 @@ import com.dtv.androidtv.data.PlatformCatalog
 import com.dtv.androidtv.data.model.LivePlatform
 import com.dtv.androidtv.data.model.SearchHit
 import com.dtv.androidtv.data.model.Streamer
+import com.dtv.androidtv.ui.TvActionButton
 import com.dtv.androidtv.ui.TvLayout
+import com.dtv.androidtv.ui.TvScreenBackground
+import com.dtv.androidtv.ui.TvStatusBlock
+import com.dtv.androidtv.ui.components.CategoryChip
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -64,126 +65,105 @@ fun SearchScreen(
         runCatching { queryFocus.requestFocus() }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    listOf(Color(0xFF0B1020), Color(0xFF16213E), Color(0xFF0B1020)),
-                ),
-            )
-            .padding(TvLayout.ScreenPadding),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
+    TvScreenBackground {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(TvLayout.ScreenPadding),
         ) {
-            Text(
-                text = "搜索",
-                style = MaterialTheme.typography.displaySmall,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            Surface(
-                onClick = onBack,
-                scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
-            ) {
-                Text(
-                    text = "返回",
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-                    style = MaterialTheme.typography.labelLarge,
-                )
-            }
-        }
-
-        Spacer(Modifier.height(16.dp))
-        PlatformChips(
-            selected = state.platform,
-            labelOf = catalog::label,
-            onClick = viewModel::setPlatform,
-        )
-        Spacer(Modifier.height(16.dp))
-
-        Surface(
-            onClick = { runCatching { queryFocus.requestFocus() } },
-            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.02f),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            BasicTextField(
-                value = state.query,
-                onValueChange = viewModel::setQuery,
-                singleLine = true,
-                textStyle = MaterialTheme.typography.titleLarge.copy(
-                    color = MaterialTheme.colorScheme.onSurface,
-                ),
-                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { viewModel.search() }),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .focusRequester(queryFocus)
-                    .padding(horizontal = 20.dp, vertical = 16.dp),
-                decorationBox = { inner ->
-                    Box {
-                        if (state.query.isEmpty()) {
-                            Text(
-                                text = state.hint,
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                            )
-                        }
-                        inner()
-                    }
-                },
-            )
-        }
-
-        Spacer(Modifier.height(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Surface(
-                onClick = { viewModel.search() },
-                scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text(
                     text = "搜索",
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
-                    style = MaterialTheme.typography.labelLarge,
+                    style = MaterialTheme.typography.displaySmall,
+                    color = MaterialTheme.colorScheme.primary,
                 )
+                TvActionButton(label = "返回", onClick = onBack)
             }
-        }
 
-        Spacer(Modifier.height(20.dp))
-        when {
-            state.loading -> {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("搜索中…", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(TvLayout.HeaderBottom))
+            PlatformChips(
+                selected = state.platform,
+                labelOf = catalog::label,
+                onClick = viewModel::setPlatform,
+            )
+            Spacer(Modifier.height(16.dp))
+
+            Surface(
+                onClick = { runCatching { queryFocus.requestFocus() } },
+                scale = ClickableSurfaceDefaults.scale(focusedScale = 1.02f),
+                colors = ClickableSurfaceDefaults.colors(
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                    focusedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                BasicTextField(
+                    value = state.query,
+                    onValueChange = viewModel::setQuery,
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.titleLarge.copy(
+                        color = MaterialTheme.colorScheme.onSurface,
+                    ),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { viewModel.search() }),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(queryFocus)
+                        .padding(horizontal = 20.dp, vertical = 16.dp),
+                    decorationBox = { inner ->
+                        Box {
+                            if (state.query.isEmpty()) {
+                                Text(
+                                    text = state.hint,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                                )
+                            }
+                            inner()
+                        }
+                    },
+                )
+            }
+
+            Spacer(Modifier.height(14.dp))
+            TvActionButton(label = "开始搜索", onClick = { viewModel.search() }, emphasized = true)
+
+            Spacer(Modifier.height(20.dp))
+            when {
+                state.loading -> {
+                    TvStatusBlock(title = "搜索中…")
                 }
-            }
-            state.error != null && state.hits.isEmpty() -> {
-                Text(
-                    text = state.error ?: "",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),
-                )
-            }
-            state.hits.isEmpty() -> {
-                Text(
-                    text = "输入关键词后按「搜索」或遥控器确认键",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
-                )
-            }
-            else -> {
-                LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    contentPadding = PaddingValues(bottom = 24.dp),
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    items(state.hits, key = { it.id }) { hit ->
-                        SearchHitRow(
-                            hit = hit,
-                            onClick = { onOpenRoom(viewModel.toStreamer(hit)) },
-                        )
+                state.error != null && state.hits.isEmpty() -> {
+                    TvStatusBlock(
+                        title = "没有结果",
+                        message = state.error,
+                        actionLabel = "再试一次",
+                        onAction = { viewModel.search() },
+                    )
+                }
+                state.hits.isEmpty() -> {
+                    TvStatusBlock(
+                        title = "输入关键词后搜索",
+                        message = "遥控器输入后点「开始搜索」，或用确认键提交",
+                    )
+                }
+                else -> {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        contentPadding = PaddingValues(bottom = 24.dp),
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        items(state.hits, key = { it.id }) { hit ->
+                            SearchHitRow(
+                                hit = hit,
+                                onClick = { onOpenRoom(viewModel.toStreamer(hit)) },
+                            )
+                        }
                     }
                 }
             }
@@ -200,24 +180,11 @@ private fun PlatformChips(
 ) {
     LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         itemsIndexed(LivePlatform.entries) { _, platform ->
-            val active = platform == selected
-            Surface(
+            CategoryChip(
+                label = labelOf(platform),
+                selected = platform == selected,
                 onClick = { onClick(platform) },
-                scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
-                colors = ClickableSurfaceDefaults.colors(
-                    containerColor = if (active) {
-                        MaterialTheme.colorScheme.primaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                    },
-                ),
-            ) {
-                Text(
-                    text = labelOf(platform),
-                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
-                    style = MaterialTheme.typography.labelLarge,
-                )
-            }
+            )
         }
     }
 }
@@ -231,6 +198,10 @@ private fun SearchHitRow(
     Surface(
         onClick = onClick,
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+            focusedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
+        ),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Row(
@@ -259,7 +230,7 @@ private fun SearchHitRow(
                 text = if (hit.isLive) "直播中" else "未开播",
                 style = MaterialTheme.typography.labelLarge,
                 color = if (hit.isLive) {
-                    MaterialTheme.colorScheme.primary
+                    MaterialTheme.colorScheme.secondary
                 } else {
                     MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                 },

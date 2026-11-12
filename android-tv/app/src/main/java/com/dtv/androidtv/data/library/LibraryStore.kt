@@ -91,6 +91,22 @@ class LibraryStore(context: Context) {
         prefs.edit().putBoolean(KEY_DANMAKU_ENABLED, enabled).apply()
     }
 
+    /** Wipe local follows (Settings optional action). */
+    @Synchronized
+    fun clearFollows() {
+        prefs.edit().remove(KEY_FOLLOWS).apply()
+    }
+
+    /** Wipe recent watch history (Settings optional action). */
+    @Synchronized
+    fun clearRecent() {
+        prefs.edit().remove(KEY_RECENT).apply()
+    }
+
+    fun followCount(): Int = loadFollows().size
+
+    fun recentCount(): Int = loadRecent().size
+
     private fun readList(key: String): List<Streamer> {
         val raw = prefs.getString(key, null) ?: return emptyList()
         return try {
