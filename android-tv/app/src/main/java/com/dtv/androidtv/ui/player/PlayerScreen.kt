@@ -173,6 +173,14 @@ fun PlayerScreen(
                 modifier = Modifier.fillMaxSize(),
                 update = { it.player = playback.player },
             )
+            // Danmaku sits above video, below chrome / status panels.
+            if (roomId != "test") {
+                DanmakuOverlay(
+                    messages = state.danmakuMessages,
+                    enabled = state.danmakuEnabled,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
         }
 
         if (state.loading) {
@@ -214,6 +222,7 @@ fun PlayerScreen(
                         ?: if (state.useTestHls) "Media3 测试 HLS" else "",
                     qualityLabel = state.selected?.let { "${it.label} · ${it.format.uppercase()}" },
                     followed = state.followed,
+                    danmakuEnabled = state.danmakuEnabled,
                     playPauseFocus = playPauseFocus,
                     isPlaying = isPlaying,
                     onPlayPause = {
@@ -223,8 +232,10 @@ fun PlayerScreen(
                         viewModel.setChromeVisible(true)
                     },
                     onToggleFollow = { viewModel.toggleFollow() },
+                    onToggleDanmaku = { viewModel.toggleDanmaku() },
                     onBack = onBack,
                     showFollow = roomId != "test",
+                    showDanmakuToggle = roomId != "test",
                 )
             }
         }
@@ -238,12 +249,15 @@ private fun PlayerChrome(
     title: String,
     qualityLabel: String?,
     followed: Boolean,
+    danmakuEnabled: Boolean,
     playPauseFocus: FocusRequester,
     isPlaying: Boolean,
     onPlayPause: () -> Unit,
     onToggleFollow: () -> Unit,
+    onToggleDanmaku: () -> Unit,
     onBack: () -> Unit,
     showFollow: Boolean,
+    showDanmakuToggle: Boolean,
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
         Box(
@@ -308,6 +322,12 @@ private fun PlayerChrome(
                 ChromeButton(
                     label = if (followed) "已关注" else "关注",
                     onClick = onToggleFollow,
+                )
+            }
+            if (showDanmakuToggle) {
+                ChromeButton(
+                    label = if (danmakuEnabled) "弹幕开" else "弹幕关",
+                    onClick = onToggleDanmaku,
                 )
             }
             Spacer(Modifier.weight(1f))

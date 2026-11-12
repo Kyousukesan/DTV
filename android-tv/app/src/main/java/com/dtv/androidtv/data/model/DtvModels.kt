@@ -81,3 +81,51 @@ data class StreamInfo(
     val variants: List<StreamVariant>,
     val lines: List<LineOption>,
 )
+
+/** Danmaku kind; mirrors frontend `DanmakuKind` / Go `common.DanmakuKind`. */
+enum class DanmakuKind(val id: String) {
+    CHAT("chat"),
+    GIFT("gift"),
+    SYSTEM("system"),
+    ENTER("enter");
+
+    companion object {
+        fun fromId(raw: String): DanmakuKind =
+            entries.firstOrNull { it.id.equals(raw, ignoreCase = true) } ?: CHAT
+    }
+}
+
+/**
+ * Display mode for the TV overlay (desktop danmu.js: scroll / top / bottom).
+ * Douyu chat packets do not carry a mode; TV defaults to [SCROLL].
+ */
+enum class DanmakuMode(val id: String) {
+    SCROLL("scroll"),
+    TOP("top"),
+    BOTTOM("bottom");
+
+    companion object {
+        fun fromId(raw: String?): DanmakuMode =
+            entries.firstOrNull { it.id.equals(raw.orEmpty(), ignoreCase = true) } ?: SCROLL
+    }
+}
+
+/** Normalized danmaku message (Go `common.DanmakuMessage`). */
+data class DanmakuMessage(
+    val id: String,
+    val nickname: String,
+    val content: String,
+    val level: Int = 0,
+    /** `#RRGGBB` when Douyu `col` maps; empty → UI default white. */
+    val color: String = "",
+    val kind: DanmakuKind = DanmakuKind.CHAT,
+    val at: Long = System.currentTimeMillis(),
+    val mode: DanmakuMode = DanmakuMode.SCROLL,
+)
+
+/** Room-scoped danmaku event payload. */
+data class DanmakuEvent(
+    val roomId: String,
+    val platform: String = LivePlatform.DOUYU.id,
+    val message: DanmakuMessage,
+)

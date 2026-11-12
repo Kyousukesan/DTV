@@ -62,6 +62,13 @@ class LibraryStore(context: Context) {
         writeList(KEY_RECENT, merge(loadRecent()))
     }
 
+    /** Player danmaku overlay; default on (documented in android-tv README). */
+    fun isDanmakuEnabled(): Boolean = prefs.getBoolean(KEY_DANMAKU_ENABLED, true)
+
+    fun setDanmakuEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_DANMAKU_ENABLED, enabled).apply()
+    }
+
     private fun readList(key: String): List<Streamer> {
         val raw = prefs.getString(key, null) ?: return emptyList()
         return try {
@@ -115,6 +122,7 @@ class LibraryStore(context: Context) {
         private const val PREFS_NAME = "dtv_tv_library"
         private const val KEY_FOLLOWS = "follows"
         private const val KEY_RECENT = "recent"
+        private const val KEY_DANMAKU_ENABLED = "danmaku_enabled"
         const val MAX_FOLLOWS = 40
         const val MAX_RECENT = 24
     }

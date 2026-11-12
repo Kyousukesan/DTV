@@ -11,10 +11,11 @@ Kotlin 契约移植桌面端 `DtvApi` / `common` 与 Go `internal/platforms/douy
 - 播放页 chrome：OK 显控 / 播放暂停、关注切换、Back 退出；未开播 / 错误可读 + 重试
 - Media3：斗鱼 FLV + 测试 HLS
 - **LT-5 FLV 续流**：本地 `127.0.0.1` splice 中继（移植桌面 `StreamRelayService` / `flv_relay`）：到期前预取新签名直链，在 FLV tag/关键帧边界拼接；Media3 只播一条本地 URL。失败时仍保留 quiet re-sign + 错误退避兜底。
+- **LT-6 斗鱼弹幕**：TCP STT（`danmuproxy.douyu.com:8601+`，移植 Go `danmaku.go`）→ Compose 全屏叠加层（scroll / top / bottom）；播放器 chrome **弹幕开/关**（默认开，SharedPreferences 持久化）。
 
 ## 明确延后
 
-弹幕、扫码登录、虎牙/抖音/B 站、局域网同步。
+扫码登录、虎牙/抖音/B 站、局域网同步。
 
 ## Douyu 播放路径说明
 
@@ -25,6 +26,7 @@ Kotlin 契约移植桌面端 `DtvApi` / `common` 与 Go `internal/platforms/douy
 | 取流 | `websec/getEncryption` → POST `lapi/live/getH5PlayV1/{roomId}` |
 | 格式 | **几乎总是 FLV**（`format=flv`）。若 URL 含 `.m3u8` 则走 HLS |
 | ~300s 掐线 | **本地 FLV splice 中继**（`DouyuFlvRelayServer` + `relayFlv`）：~295s 预取新直链；CDN EOF 时 `eof_renew`，或边沿 TCP 不掐时在 TTL 主动 `ttl_rotate`；丢新段文件头/seq header，从越过时间轴的关键帧接上；`expire=0` 仍保留。中继失败时回退 MediaItem re-sign。 |
+| 弹幕 | 明文 TCP `danmuproxy.douyu.com:8601/8602/8603` + STT：`loginreq` → `joingroup` → 45s `mrkl`；`chatmsg`/`uenter` 归一化为 `DanmakuMessage`；Compose `DanmakuOverlay` 渲染。 |
 
 ## 续流验证
 
@@ -89,6 +91,11 @@ app/src/main/java/com/dtv/androidtv/
   data/model/          # common / DtvApi 契约
   data/douyu/          # Douyu Kotlin 移植
   data/DtvApi.kt
-  player/              # Media3 + FLV 重签
-  ui/browse|player/    # Compose for TV
+  data/douyu/          # Douyu HTTP + danmaku STT
+  player/              # Media3 + FLV relay
+  ui/browse|player/    # Compose for TV (+ DanmakuOverlay)
 ```
+
+## 弹幕开关
+
+播放页 OK 调出 chrome → **弹幕开 / 弹幕关**。默认开启；偏好写入 `dtv_tv_library` SharedPreferences。关闭时断开 TCP 并清空叠加层。
