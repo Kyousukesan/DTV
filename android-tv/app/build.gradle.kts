@@ -13,8 +13,8 @@ android {
         minSdk = 24
         targetSdk = 35
         versionCode = 1
-        // LT-18: Canvas danmaku inside PlayerView.exo_overlay (past LT-17).
-        versionName = "0.2.0-lt18"
+        // LT-20: danmaku font/opacity/speed settings (past LT-18 canvas).
+        versionName = "0.2.0-lt20"
         // TV leanback launcher + DPAD; phone install not a Slice-1 goal.
         vectorDrawables.useSupportLibrary = true
     }

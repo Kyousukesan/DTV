@@ -35,6 +35,7 @@ import com.dtv.androidtv.data.PlatformCatalog
 import com.dtv.androidtv.data.model.AuthAccount
 import com.dtv.androidtv.data.model.LivePlatform
 import com.dtv.androidtv.data.model.QRLoginStatus
+import com.dtv.androidtv.data.library.DanmakuStyleCycles
 import com.dtv.androidtv.ui.TvActionButton
 import com.dtv.androidtv.ui.TvLayout
 import com.dtv.androidtv.ui.TvScreenBackground
@@ -78,6 +79,9 @@ fun SettingsScreen(
                 onLogin = viewModel::startQrLogin,
                 onLogout = viewModel::logout,
                 onToggleDanmaku = viewModel::toggleDanmakuDefault,
+                onCycleFont = viewModel::cycleDanmakuFont,
+                onCycleOpacity = viewModel::cycleDanmakuOpacity,
+                onCycleSpeed = viewModel::cycleDanmakuSpeed,
                 onClearFollows = viewModel::clearFollows,
                 onClearRecent = viewModel::clearRecent,
                 onPlayTest = onPlayTest,
@@ -95,6 +99,9 @@ private fun SettingsHome(
     onLogin: (LivePlatform) -> Unit,
     onLogout: (LivePlatform) -> Unit,
     onToggleDanmaku: () -> Unit,
+    onCycleFont: () -> Unit,
+    onCycleOpacity: () -> Unit,
+    onCycleSpeed: () -> Unit,
     onClearFollows: () -> Unit,
     onClearRecent: () -> Unit,
     onPlayTest: (() -> Unit)?,
@@ -154,13 +161,35 @@ private fun SettingsHome(
         Spacer(Modifier.height(TvLayout.SectionGap))
         TvSectionHeader(
             title = "播放偏好",
-            subtitle = "影响新打开的直播间；播放页内仍可临时开关弹幕",
+            subtitle = "与桌面弹幕设置同范围；播放页 chrome 也可循环调节",
         )
         TvSettingsRow(
             title = "弹幕默认",
             subtitle = if (state.danmakuDefaultOn) "开启（推荐）" else "关闭",
             actionLabel = if (state.danmakuDefaultOn) "切换为关" else "切换为开",
             onClick = onToggleDanmaku,
+        )
+        Spacer(Modifier.height(12.dp))
+        val style = state.danmakuStyle
+        TvSettingsRow(
+            title = "弹幕字号",
+            subtitle = "${style.fontSizePx}px（14–30，步进 2）",
+            actionLabel = "增大 / 循环",
+            onClick = onCycleFont,
+        )
+        Spacer(Modifier.height(12.dp))
+        TvSettingsRow(
+            title = "弹幕透明度",
+            subtitle = "${DanmakuStyleCycles.formatOpacity(style.opacity)}（20%–100%）",
+            actionLabel = "增大 / 循环",
+            onClick = onCycleOpacity,
+        )
+        Spacer(Modifier.height(12.dp))
+        TvSettingsRow(
+            title = "弹幕速度",
+            subtitle = DanmakuStyleCycles.formatSpeedLabel(style.durationMs),
+            actionLabel = "变慢 / 循环",
+            onClick = onCycleSpeed,
         )
 
         Spacer(Modifier.height(TvLayout.SectionGap + 8.dp))

@@ -91,6 +91,44 @@ class LibraryStore(context: Context) {
         prefs.edit().putBoolean(KEY_DANMAKU_ENABLED, enabled).apply()
     }
 
+    /** Font / opacity / scroll duration — desktop danmuSettings ranges. */
+    fun getDanmakuStyle(): DanmakuStyle =
+        DanmakuStyle.normalize(
+            fontSizePx = prefs.getInt(KEY_DANMAKU_FONT_PX, DanmakuStyle.DEFAULT_FONT_PX),
+            opacity = prefs.getFloat(KEY_DANMAKU_OPACITY, DanmakuStyle.DEFAULT_OPACITY),
+            durationMs = prefs.getLong(KEY_DANMAKU_DURATION_MS, DanmakuStyle.DEFAULT_DURATION_MS),
+        )
+
+    fun setDanmakuStyle(style: DanmakuStyle) {
+        val n = DanmakuStyle.normalize(style.fontSizePx, style.opacity, style.durationMs)
+        prefs.edit()
+            .putInt(KEY_DANMAKU_FONT_PX, n.fontSizePx)
+            .putFloat(KEY_DANMAKU_OPACITY, n.opacity)
+            .putLong(KEY_DANMAKU_DURATION_MS, n.durationMs)
+            .apply()
+    }
+
+    fun cycleDanmakuFont(): DanmakuStyle {
+        val cur = getDanmakuStyle()
+        val next = cur.copy(fontSizePx = DanmakuStyleCycles.nextFont(cur.fontSizePx))
+        setDanmakuStyle(next)
+        return next
+    }
+
+    fun cycleDanmakuOpacity(): DanmakuStyle {
+        val cur = getDanmakuStyle()
+        val next = cur.copy(opacity = DanmakuStyleCycles.nextOpacity(cur.opacity))
+        setDanmakuStyle(next)
+        return next
+    }
+
+    fun cycleDanmakuDuration(): DanmakuStyle {
+        val cur = getDanmakuStyle()
+        val next = cur.copy(durationMs = DanmakuStyleCycles.nextDuration(cur.durationMs))
+        setDanmakuStyle(next)
+        return next
+    }
+
     /** Wipe local follows (Settings optional action). */
     @Synchronized
     fun clearFollows() {
@@ -161,6 +199,9 @@ class LibraryStore(context: Context) {
         private const val KEY_FOLLOWS = "follows"
         private const val KEY_RECENT = "recent"
         private const val KEY_DANMAKU_ENABLED = "danmaku_enabled"
+        private const val KEY_DANMAKU_FONT_PX = "danmaku_font_px"
+        private const val KEY_DANMAKU_OPACITY = "danmaku_opacity"
+        private const val KEY_DANMAKU_DURATION_MS = "danmaku_duration_ms"
         const val MAX_FOLLOWS = 40
         const val MAX_RECENT = 24
     }
