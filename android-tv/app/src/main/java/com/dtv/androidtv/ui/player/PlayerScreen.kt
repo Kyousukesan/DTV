@@ -3,6 +3,7 @@ package com.dtv.androidtv.ui.player
 import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.ViewGroup
+import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
@@ -31,7 +32,9 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
@@ -47,9 +50,20 @@ import androidx.tv.material3.Text
 import com.dtv.androidtv.DtvTvApp
 import com.dtv.androidtv.R
 import com.dtv.androidtv.data.DtvApi
+import com.dtv.androidtv.data.model.DanmakuMessage
 import com.dtv.androidtv.player.StreamPlayback
 import com.dtv.androidtv.ui.TvLayout
 import kotlinx.coroutines.delay
+
+/**
+ * Stable holder so [ComposeView.setContent] runs once in factory; [update] only
+ * mutates state (re-calling setContent would reset DanmakuOverlay remember).
+ */
+private class DanmakuOverlayHostState {
+    var messages by mutableStateOf<List<DanmakuMessage>>(emptyList())
+    var enabled by mutableStateOf(true)
+    var show by mutableStateOf(false)
+}
 
 @OptIn(UnstableApi::class)
 @kotlin.OptIn(ExperimentalTvMaterial3Api::class)
@@ -77,6 +91,12 @@ fun PlayerScreen(
     val rootFocus = remember { FocusRequester() }
     val playPauseFocus = remember { FocusRequester() }
     var isPlaying by remember { mutableStateOf(true) }
+    // Danmaku ComposeView lives inside the PlayerView FrameLayout (Android
+    // child z-order) so Sony/Leanback cannot leave TextureView above Compose siblings.
+    val danmakuHost = remember { DanmakuOverlayHostState() }
+    danmakuHost.messages = state.danmakuMessages
+    danmakuHost.enabled = state.danmakuEnabled
+    danmakuHost.show = roomId != "test" && state.danmakuSupported
 
     // Desktop Esc: overlays → exit fullscreen → navigate.
     // TV Back maps the same layering: reveal chrome first, then leave the room.
@@ -198,40 +218,74 @@ fun PlayerScreen(
         if (!state.notLive && state.error == null) {
             AndroidView(
                 factory = { ctx ->
-                    // Inflate with app:surface_type=texture_view — Media3 1.5 keeps
-                    // setSurfaceType private; SurfaceView would punch through Compose.
-                    (LayoutInflater.from(ctx)
-                        .inflate(R.layout.player_view_texture, null, false) as PlayerView)
-                        .apply {
-                            layoutParams = ViewGroup.LayoutParams(
+                    // FrameLayout child order = draw order: TextureView PlayerView,
+                    // then ComposeView danmaku (matches desktop video < danmu < chrome).
+                    FrameLayout(ctx).apply {
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                        )
+                        isFocusable = false
+                        isFocusableInTouchMode = false
+                        descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+
+                        // Inflate with app:surface_type=texture_view — Media3 1.5 keeps
+                        // setSurfaceType private; SurfaceView would punch through overlays.
+                        val playerView = (LayoutInflater.from(ctx)
+                            .inflate(R.layout.player_view_texture, this, false) as PlayerView)
+                            .apply {
+                                layoutParams = FrameLayout.LayoutParams(
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                )
+                                isFocusable = false
+                                isFocusableInTouchMode = false
+                                useController = false
+                                player = playback.player
+                            }
+                        addView(playerView)
+
+                        val overlayView = ComposeView(ctx).apply {
+                            layoutParams = FrameLayout.LayoutParams(
                                 ViewGroup.LayoutParams.MATCH_PARENT,
                                 ViewGroup.LayoutParams.MATCH_PARENT,
                             )
-                            // Keep DPAD / focus on Compose chrome, not the PlayerView tree.
+                            isClickable = false
                             isFocusable = false
-                            isFocusableInTouchMode = false
-                            descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
-                            useController = false
-                            player = playback.player
+                            setViewCompositionStrategy(
+                                ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed,
+                            )
+                            // setContent once; host state drives recomposition.
+                            setContent {
+                                if (danmakuHost.show) {
+                                    DanmakuOverlay(
+                                        messages = danmakuHost.messages,
+                                        enabled = danmakuHost.enabled,
+                                        modifier = Modifier.fillMaxSize(),
+                                    )
+                                }
+                            }
                         }
+                        addView(overlayView)
+                        tag = playerView
+                    }
                 },
-                modifier = Modifier.fillMaxSize(),
-                update = { it.player = playback.player },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(0f),
+                update = { frame ->
+                    (frame.tag as? PlayerView)?.player = playback.player
+                },
             )
-            // Danmaku sits above video, below chrome / status panels.
-            if (roomId != "test" && state.danmakuSupported) {
-                DanmakuOverlay(
-                    messages = state.danmakuMessages,
-                    enabled = state.danmakuEnabled,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .zIndex(1f),
-                )
-            }
         }
 
         if (state.loading || state.switching) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(1f),
+                contentAlignment = Alignment.Center,
+            ) {
                 Text(
                     if (state.switching) "正在切换线路…" else "正在解析直播流…",
                     color = Color.White,
@@ -242,60 +296,67 @@ fun PlayerScreen(
 
         when {
             state.notLive -> {
-                StatusPanel(
-                    title = state.info?.nickname ?: fallbackNickname.ifBlank { "直播间" },
-                    message = "主播未开播",
-                    primaryLabel = "重试",
-                    onPrimary = { viewModel.load() },
-                    secondaryLabel = "返回",
-                    onSecondary = onBack,
-                )
+                Box(Modifier.zIndex(2f).fillMaxSize()) {
+                    StatusPanel(
+                        title = state.info?.nickname ?: fallbackNickname.ifBlank { "直播间" },
+                        message = "主播未开播",
+                        primaryLabel = "重试",
+                        onPrimary = { viewModel.load() },
+                        secondaryLabel = "返回",
+                        onSecondary = onBack,
+                    )
+                }
             }
             state.error != null -> {
-                StatusPanel(
-                    title = "播放出错",
-                    message = state.error ?: "",
-                    primaryLabel = "重试",
-                    onPrimary = { viewModel.load() },
-                    secondaryLabel = "返回",
-                    onSecondary = onBack,
-                )
+                Box(Modifier.zIndex(2f).fillMaxSize()) {
+                    StatusPanel(
+                        title = "播放出错",
+                        message = state.error ?: "",
+                        primaryLabel = "重试",
+                        onPrimary = { viewModel.load() },
+                        secondaryLabel = "返回",
+                        onSecondary = onBack,
+                    )
+                }
             }
             state.chromeVisible -> {
                 val qualityText = state.selected?.let { "${it.label} · ${it.format.uppercase()}" }
                 val lineText = state.lineLabel
-                PlayerChrome(
-                    nickname = state.info?.nickname
-                        ?: if (state.useTestHls) "测试流" else fallbackNickname,
-                    title = state.info?.title
-                        ?: if (state.useTestHls) "Media3 测试 HLS" else "",
-                    qualityLabel = listOfNotNull(
-                        qualityText?.let { "清晰度 $it" },
-                        lineText?.let { "线路 $it" },
-                    ).joinToString(" · ").ifBlank { null },
-                    followed = state.followed,
-                    danmakuEnabled = state.danmakuEnabled,
-                    playPauseFocus = playPauseFocus,
-                    isPlaying = isPlaying,
-                    canCycleQuality = state.canCycleQuality,
-                    canCycleLine = state.canCycleLine,
-                    qualityButtonLabel = state.selected?.label?.let { "切换清晰度：$it" }
-                        ?: "切换清晰度",
-                    lineButtonLabel = state.lineLabel?.let { "切换线路：$it" } ?: "切换线路",
-                    onPlayPause = {
-                        val p = playback.player
-                        if (p.isPlaying) p.pause() else p.play()
-                        isPlaying = p.playWhenReady
-                        viewModel.setChromeVisible(true)
-                    },
-                    onToggleFollow = { viewModel.toggleFollow() },
-                    onToggleDanmaku = { viewModel.toggleDanmaku() },
-                    onCycleQuality = { viewModel.cycleQuality() },
-                    onCycleLine = { viewModel.cycleLine() },
-                    onBack = onBack,
-                    showFollow = roomId != "test",
-                    showDanmakuToggle = roomId != "test" && state.danmakuSupported,
-                )
+                // Desktop: danmu z≈7, chrome z≈20 — chrome must sit above the overlay host.
+                Box(Modifier.zIndex(2f).fillMaxSize()) {
+                    PlayerChrome(
+                        nickname = state.info?.nickname
+                            ?: if (state.useTestHls) "测试流" else fallbackNickname,
+                        title = state.info?.title
+                            ?: if (state.useTestHls) "Media3 测试 HLS" else "",
+                        qualityLabel = listOfNotNull(
+                            qualityText?.let { "清晰度 $it" },
+                            lineText?.let { "线路 $it" },
+                        ).joinToString(" · ").ifBlank { null },
+                        followed = state.followed,
+                        danmakuEnabled = state.danmakuEnabled,
+                        playPauseFocus = playPauseFocus,
+                        isPlaying = isPlaying,
+                        canCycleQuality = state.canCycleQuality,
+                        canCycleLine = state.canCycleLine,
+                        qualityButtonLabel = state.selected?.label?.let { "切换清晰度：$it" }
+                            ?: "切换清晰度",
+                        lineButtonLabel = state.lineLabel?.let { "切换线路：$it" } ?: "切换线路",
+                        onPlayPause = {
+                            val p = playback.player
+                            if (p.isPlaying) p.pause() else p.play()
+                            isPlaying = p.playWhenReady
+                            viewModel.setChromeVisible(true)
+                        },
+                        onToggleFollow = { viewModel.toggleFollow() },
+                        onToggleDanmaku = { viewModel.toggleDanmaku() },
+                        onCycleQuality = { viewModel.cycleQuality() },
+                        onCycleLine = { viewModel.cycleLine() },
+                        onBack = onBack,
+                        showFollow = roomId != "test",
+                        showDanmakuToggle = roomId != "test" && state.danmakuSupported,
+                    )
+                }
             }
         }
     }
