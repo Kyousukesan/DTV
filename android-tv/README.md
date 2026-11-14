@@ -65,7 +65,13 @@ cd android-tv
 ./gradlew :app:assembleDebug
 ```
 
-APK：`app/build/outputs/apk/debug/app-debug.apk`（`applicationId` 带 `.debug` 后缀）。
+Gradle 输出：`app/build/outputs/apk/debug/app-debug.apk`（`applicationId` 带 `.debug` 后缀）。
+
+侧载用版本化文件名（`assembleDebug` 结束后由 `copyDebugApkToDist` 复制）：
+
+`dist/dtv-tv-debug-<versionName>.apk`
+
+当前 debug：`dist/dtv-tv-debug-0.2.0-lt15-debug.apk`（`versionName` = `0.2.0-lt15` + `-debug`）。
 
 Release：
 
@@ -77,7 +83,7 @@ Release：
 
 ```bash
 # 启动 TV AVD 后：
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb install -r dist/dtv-tv-debug-0.2.0-lt15-debug.apk
 adb shell am start -n com.dtv.androidtv.debug/com.dtv.androidtv.MainActivity
 ```
 

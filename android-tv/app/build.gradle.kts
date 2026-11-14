@@ -13,7 +13,8 @@ android {
         minSdk = 24
         targetSdk = 35
         versionCode = 1
-        versionName = "0.2.0-lt11"
+        // LT-15: bump so post-LT-14 sideload builds are distinct from 0.2.0-lt11.
+        versionName = "0.2.0-lt15"
         // TV leanback launcher + DPAD; phone install not a Slice-1 goal.
         vectorDrawables.useSupportLibrary = true
     }
@@ -137,4 +138,39 @@ dependencies {
     // Real org.json + Robolectric so DouyuClient / OkHttp live smoke can run on JVM.
     testImplementation("org.json:json:20240303")
     testImplementation("org.robolectric:robolectric:4.14.1")
+}
+
+/**
+ * Sideload artifact name: `dtv-tv-debug-<versionName>.apk` under `android-tv/dist/`.
+ * Uses the effective debug versionName (base + versionNameSuffix), with filesystem-unsafe chars replaced.
+ */
+fun sanitizeApkVersionForFilename(versionName: String): String =
+    versionName.replace(Regex("""[\\/:*?"<>|\s]+"""), "-")
+
+tasks.register("copyDebugApkToDist") {
+    group = "distribution"
+    description = "Copy debug APK to android-tv/dist/ with versioned filename"
+    dependsOn("assembleDebug")
+    doLast {
+        val base = android.defaultConfig.versionName ?: error("versionName missing")
+        val suffix = android.buildTypes.getByName("debug").versionNameSuffix.orEmpty()
+        val versioned = sanitizeApkVersionForFilename(base + suffix)
+        val destName = "dtv-tv-debug-$versioned.apk"
+        val src = layout.buildDirectory.file("outputs/apk/debug/app-debug.apk").get().asFile
+        val distDir = rootProject.layout.projectDirectory.dir("dist").asFile
+        require(src.isFile) { "Missing debug APK at ${src.absolutePath}" }
+        distDir.mkdirs()
+        // Drop legacy unversioned name so dist only ships the versioned artifact.
+        distDir.resolve("dtv-tv-debug.apk").takeIf { it.exists() }?.delete()
+        val dest = distDir.resolve(destName)
+        src.copyTo(dest, overwrite = true)
+        logger.lifecycle("Copied debug APK → ${dest.absolutePath} (${dest.length()} bytes)")
+    }
+}
+
+// assembleDebug is created by the Android plugin after this script is evaluated.
+afterEvaluate {
+    tasks.named("assembleDebug") {
+        finalizedBy("copyDebugApkToDist")
+    }
 }
