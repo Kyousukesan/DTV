@@ -79,8 +79,17 @@ class PlayerViewModel(
         val manager = danmaku
         if (manager != null) {
             viewModelScope.launch {
+                var accepted = 0
                 manager.events.collect { event ->
                     if (event.roomId != roomId && roomId != "test") return@collect
+                    accepted += 1
+                    if (accepted == 1 || accepted % 25 == 0) {
+                        android.util.Log.i(
+                            "PlayerDanmaku",
+                            "event#$accepted room=${event.roomId} kind=${event.message.kind.id} " +
+                                "txt=${event.message.content.take(24)}",
+                        )
+                    }
                     _state.update { ui ->
                         val next = (ui.danmakuMessages + event.message).takeLast(MAX_DANMAKU_BUFFER)
                         ui.copy(danmakuMessages = next)

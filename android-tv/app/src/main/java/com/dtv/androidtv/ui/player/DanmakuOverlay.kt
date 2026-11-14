@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
@@ -15,6 +16,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,21 +30,19 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.tv.material3.ExperimentalTvMaterial3Api
-import androidx.tv.material3.Text
-import com.dtv.androidtv.data.model.DanmakuKind
 import com.dtv.androidtv.data.model.DanmakuMessage
 import com.dtv.androidtv.data.model.DanmakuMode
 
 /** TV-tuned defaults: readable at 10-foot, density-capped. */
 object DanmakuTvDefaults {
     const val AREA_FRACTION = 0.55f
-    const val OPACITY = 0.92f
+    const val OPACITY = 0.95f
     const val MAX_ACTIVE = 28
     const val SCROLL_DURATION_MS = 11_000L
     const val FIXED_DURATION_MS = 4_500L
-    val FontSize = 22.sp
-    val TrackGap = 4.dp
+    /** Larger than phone UI so bullets read from a sofa. */
+    val FontSize = 28.sp
+    val TrackGap = 6.dp
 }
 
 @Immutable
@@ -59,8 +59,11 @@ private data class ActiveDanmaku(
  * Lightweight Compose danmaku layer (scroll / top / bottom).
  *
  * Approximate lane collision; not a full danmu.js port.
+ *
+ * Admission uses [snapshotFlow] so rapid StateFlow emits cannot cancel a batch
+ * mid-way (unlike `LaunchedEffect(messages)`), which previously marked ids as
+ * seen without ever drawing them.
  */
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun DanmakuOverlay(
     messages: List<DanmakuMessage>,
@@ -75,45 +78,38 @@ fun DanmakuOverlay(
     // Frame clock forces scroll offsets to recompose every vsync.
     var frameNanos by remember { mutableLongStateOf(0L) }
 
-    LaunchedEffect(messages) {
-        val now = System.currentTimeMillis()
-        for (msg in messages) {
-            if (!seen.add(msg.id)) continue
+    LaunchedEffect(Unit) {
+        snapshotFlow { messages }.collect { list ->
+            if (list.isEmpty()) {
+                // Room reload / toggle clears the ring buffer — reset lanes too.
+                seen.clear()
+                active.clear()
+                trackFreeAt.fill(0L)
+                return@collect
+            }
             if (seen.size > 500) {
                 val drop = seen.toList().take(seen.size - 400)
                 drop.forEach { seen.remove(it) }
             }
-            if (active.size >= DanmakuTvDefaults.MAX_ACTIVE) continue
-            // Match desktop DanmuOverlay (chat-only on video); skip ENTER/gift clutter.
-            when (msg.kind) {
-                DanmakuKind.GIFT, DanmakuKind.ENTER -> continue
-                DanmakuKind.CHAT, DanmakuKind.SYSTEM -> Unit
-            }
-            val mode = when (msg.kind) {
-                DanmakuKind.SYSTEM -> DanmakuMode.TOP
-                else -> msg.mode
-            }
-            val track = if (mode == DanmakuMode.SCROLL) {
-                allocateTrack(trackFreeAt, now) ?: continue
-            } else {
-                0
-            }
-            val duration = if (mode == DanmakuMode.SCROLL) {
-                DanmakuTvDefaults.SCROLL_DURATION_MS
-            } else {
-                DanmakuTvDefaults.FIXED_DURATION_MS
-            }
-            if (mode == DanmakuMode.SCROLL) {
-                trackFreeAt[track] = now + (duration * 0.35).toLong()
-            }
-            active += ActiveDanmaku(
-                message = msg,
-                mode = mode,
-                track = track,
-                bornMs = now,
-                durationMs = duration,
-                color = parseDanmakuColor(msg.color),
+            val now = System.currentTimeMillis()
+            val admitted = DanmakuAdmission.admit(
+                messages = list,
+                seen = seen,
+                activeCount = active.size,
+                maxActive = DanmakuTvDefaults.MAX_ACTIVE,
+                trackFreeAt = trackFreeAt,
+                nowMs = now,
             )
+            for (c in admitted) {
+                active += ActiveDanmaku(
+                    message = c.message,
+                    mode = c.mode,
+                    track = c.track,
+                    bornMs = now,
+                    durationMs = c.durationMs,
+                    color = parseDanmakuColor(c.message.color),
+                )
+            }
         }
     }
 
@@ -170,7 +166,7 @@ private fun ScrollBullet(
 ) {
     val progress = ((System.currentTimeMillis() - item.bornMs).toFloat() / item.durationMs)
         .coerceIn(0f, 1f)
-    val travel = screenWidth + 420.dp
+    val travel = screenWidth + 480.dp
     val x = screenWidth - travel * progress
     val y = trackHeight * track + 8.dp
 
@@ -206,41 +202,31 @@ private fun FixedBullet(
     }
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
+/**
+ * Use [BasicText] (not TV Material3 Text) so color/shadow are not overridden by
+ * theme LocalContentColor on Leanback devices.
+ */
 @Composable
 private fun DanmakuText(
     text: String,
     color: Color,
     modifier: Modifier = Modifier,
 ) {
-    Text(
+    BasicText(
         text = text,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
         style = TextStyle(
             color = color.copy(alpha = DanmakuTvDefaults.OPACITY),
             fontSize = DanmakuTvDefaults.FontSize,
-            fontWeight = FontWeight.SemiBold,
+            fontWeight = FontWeight.Bold,
             shadow = Shadow(
-                color = Color.Black.copy(alpha = 0.85f),
-                blurRadius = 4f,
+                color = Color.Black.copy(alpha = 0.9f),
+                blurRadius = 6f,
             ),
         ),
         modifier = modifier,
     )
-}
-
-private fun allocateTrack(freeAt: LongArray, now: Long): Int? {
-    var best = -1
-    var bestAt = Long.MAX_VALUE
-    for (i in freeAt.indices) {
-        if (freeAt[i] <= now) return i
-        if (freeAt[i] < bestAt) {
-            bestAt = freeAt[i]
-            best = i
-        }
-    }
-    return if (best >= 0 && bestAt - now < 800) best else null
 }
 
 private fun parseDanmakuColor(raw: String): Color {

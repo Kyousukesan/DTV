@@ -181,12 +181,14 @@ class DouyuDanmakuManager(
         when (fields["type"]) {
             "chatmsg" -> {
                 val at = System.currentTimeMillis()
+                val txt = fields["txt"].orEmpty()
+                if (txt.isBlank()) return
                 emit(
                     roomId,
                     DanmakuMessage(
                         id = nextId(roomId, at),
                         nickname = fields["nn"].orEmpty().ifBlank { "未知用户" },
-                        content = fields["txt"].orEmpty(),
+                        content = txt,
                         level = fields["level"]?.toIntOrNull() ?: 0,
                         color = DouyuDanmakuProtocol.colorFromDouyuCol(fields["col"]),
                         kind = DanmakuKind.CHAT,

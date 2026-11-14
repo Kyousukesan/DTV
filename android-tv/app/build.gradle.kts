@@ -13,8 +13,8 @@ android {
         minSdk = 24
         targetSdk = 35
         versionCode = 1
-        // LT-15: bump so post-LT-14 sideload builds are distinct from 0.2.0-lt11.
-        versionName = "0.2.0-lt15"
+        // LT-17: danmaku admission + FrameLayout overlay (past LT-15 sideload).
+        versionName = "0.2.0-lt17"
         // TV leanback launcher + DPAD; phone install not a Slice-1 goal.
         vectorDrawables.useSupportLibrary = true
     }
