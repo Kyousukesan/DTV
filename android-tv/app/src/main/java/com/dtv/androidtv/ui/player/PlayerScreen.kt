@@ -6,6 +6,7 @@ import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,6 +34,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.util.UnstableApi
@@ -71,10 +73,19 @@ fun PlayerScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val rootFocus = remember { FocusRequester() }
     val playPauseFocus = remember { FocusRequester() }
     var isPlaying by remember { mutableStateOf(true) }
 
-    BackHandler(onBack = onBack)
+    // Desktop Esc: overlays → exit fullscreen → navigate.
+    // TV Back maps the same layering: reveal chrome first, then leave the room.
+    BackHandler {
+        when {
+            state.error != null || state.notLive -> onBack()
+            !state.chromeVisible -> viewModel.setChromeVisible(true)
+            else -> onBack()
+        }
+    }
 
     val playback = remember(platformId) {
         StreamPlayback(
@@ -131,9 +142,14 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(state.chromeVisible) {
-        if (state.chromeVisible && state.error == null && !state.notLive) {
+    // When chrome is hidden there are no focusable chrome buttons — keep focus on
+    // the root Box so DPAD_CENTER / ENTER reach onPreviewKeyEvent.
+    LaunchedEffect(state.chromeVisible, state.error, state.notLive) {
+        if (state.error != null || state.notLive) return@LaunchedEffect
+        if (state.chromeVisible) {
             runCatching { playPauseFocus.requestFocus() }
+        } else {
+            runCatching { rootFocus.requestFocus() }
         }
     }
 
@@ -141,6 +157,8 @@ fun PlayerScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
+            .focusRequester(rootFocus)
+            .focusable()
             .onPreviewKeyEvent { event ->
                 if (event.nativeKeyEvent.action != KeyEvent.ACTION_DOWN) return@onPreviewKeyEvent false
                 when (event.nativeKeyEvent.keyCode) {
@@ -158,12 +176,19 @@ fun PlayerScreen(
                             false
                         }
                     }
+                    // Any DPAD while idle reveals chrome (desktop: mouse move shows chrome).
                     KeyEvent.KEYCODE_DPAD_UP,
                     KeyEvent.KEYCODE_DPAD_DOWN,
+                    KeyEvent.KEYCODE_DPAD_LEFT,
+                    KeyEvent.KEYCODE_DPAD_RIGHT,
                     KeyEvent.KEYCODE_MENU,
                     -> {
-                        viewModel.setChromeVisible(true)
-                        false
+                        if (!state.chromeVisible && state.error == null && !state.notLive) {
+                            viewModel.setChromeVisible(true)
+                            true
+                        } else {
+                            false
+                        }
                     }
                     else -> false
                 }
@@ -177,6 +202,13 @@ fun PlayerScreen(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT,
                         )
+                        // TextureView (not SurfaceView) so Compose overlays (danmaku)
+                        // composite correctly instead of being punched through.
+                        setSurfaceType(PlayerView.SURFACE_TYPE_TEXTURE_VIEW)
+                        // Keep DPAD / focus on Compose chrome, not the PlayerView tree.
+                        isFocusable = false
+                        isFocusableInTouchMode = false
+                        descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
                         // TV chrome is Compose-driven; hide Media3 touch controller.
                         useController = false
                         player = playback.player
@@ -190,7 +222,9 @@ fun PlayerScreen(
                 DanmakuOverlay(
                     messages = state.danmakuMessages,
                     enabled = state.danmakuEnabled,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .zIndex(1f),
                 )
             }
         }

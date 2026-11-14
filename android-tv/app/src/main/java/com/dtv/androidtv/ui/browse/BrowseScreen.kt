@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -161,21 +162,50 @@ fun BrowseScreen(
                                 },
                             )
                         }
-                        item(key = "live") {
-                            if (state.loading && state.rooms.isEmpty()) {
+                        // Live rooms as several horizontal rows (TV browse density),
+                        // not one sparse LazyRow that looks like a single shelf.
+                        if (state.loading && state.rooms.isEmpty()) {
+                            item(key = "live-loading") {
                                 Text(
                                     "加载分区直播…",
                                     style = MaterialTheme.typography.titleMedium,
                                     color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
                                 )
-                            } else {
+                            }
+                        } else if (state.rooms.isEmpty()) {
+                            item(key = "live-empty") {
                                 RoomRow(
                                     title = "直播 · ${state.selectedCategoryName}",
-                                    rooms = state.rooms,
+                                    rooms = emptyList(),
+                                    focusedIndex = 0,
+                                    onFocusedIndex = {},
+                                    onOpenRoom = {},
+                                    emptyHint = state.error
+                                        ?: "该分区暂无直播，试试其他分区或平台",
+                                )
+                            }
+                        } else {
+                            val perRow = LIVE_CARDS_PER_ROW
+                            val rowCount = (state.rooms.size + perRow - 1) / perRow
+                            items(
+                                count = rowCount,
+                                key = { row -> "live-row-$row" },
+                            ) { row ->
+                                val start = row * perRow
+                                val end = minOf(start + perRow, state.rooms.size)
+                                val slice = state.rooms.subList(start, end)
+                                RoomRow(
+                                    title = if (row == 0) {
+                                        "直播 · ${state.selectedCategoryName}"
+                                    } else {
+                                        ""
+                                    },
+                                    rooms = slice,
                                     focusedIndex = state.focusLive,
+                                    indexOffset = start,
                                     onFocusedIndex = { index ->
                                         viewModel.setFocusLive(index)
-                                        if (index >= state.rooms.size - 4) {
+                                        if (index >= state.rooms.size - perRow) {
                                             viewModel.loadMore()
                                         }
                                     },
@@ -183,7 +213,6 @@ fun BrowseScreen(
                                         viewModel.openRoom(room)
                                         onOpenRoom(room)
                                     },
-                                    emptyHint = state.error ?: "该分区暂无直播，试试其他分区或平台",
                                 )
                             }
                         }
@@ -269,3 +298,6 @@ private fun CategoryRow(
         }
     }
 }
+
+/** Cards per live shelf — denser vertical browse than one long horizontal row. */
+private const val LIVE_CARDS_PER_ROW = 4

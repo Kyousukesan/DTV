@@ -84,12 +84,12 @@ fun DanmakuOverlay(
                 drop.forEach { seen.remove(it) }
             }
             if (active.size >= DanmakuTvDefaults.MAX_ACTIVE) continue
+            // Match desktop DanmuOverlay (chat-only on video); skip ENTER/gift clutter.
             when (msg.kind) {
-                DanmakuKind.GIFT -> continue
-                DanmakuKind.CHAT, DanmakuKind.SYSTEM, DanmakuKind.ENTER -> Unit
+                DanmakuKind.GIFT, DanmakuKind.ENTER -> continue
+                DanmakuKind.CHAT, DanmakuKind.SYSTEM -> Unit
             }
             val mode = when (msg.kind) {
-                DanmakuKind.ENTER -> DanmakuMode.BOTTOM
                 DanmakuKind.SYSTEM -> DanmakuMode.TOP
                 else -> msg.mode
             }
@@ -196,13 +196,8 @@ private fun FixedBullet(
             .padding(top = paddingTop, bottom = paddingBottom),
         contentAlignment = alignment,
     ) {
-        val label = if (item.message.kind == DanmakuKind.ENTER) {
-            "${item.message.nickname} ${item.message.content}"
-        } else {
-            item.message.content
-        }
         DanmakuText(
-            text = label,
+            text = item.message.content,
             color = item.color,
             modifier = Modifier
                 .fillMaxWidth(0.7f)

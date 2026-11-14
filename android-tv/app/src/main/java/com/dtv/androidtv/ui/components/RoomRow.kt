@@ -22,6 +22,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
@@ -38,6 +39,10 @@ import com.dtv.androidtv.ui.TvLayout
  * [focusedIndex] is remembered by the parent; [focusRestorer] restores the last
  * focused child when DPAD leaves and re-enters this row. We only scroll the
  * remembered index into view — we do **not** steal focus from sibling rows.
+ *
+ * [title] may be blank to continue a multi-row live grid without repeating the
+ * section heading. [indexOffset] maps local card index → global list index when
+ * rooms are chunked across several rows.
  */
 @OptIn(ExperimentalTvMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
@@ -48,15 +53,20 @@ fun RoomRow(
     onFocusedIndex: (Int) -> Unit,
     onOpenRoom: (Streamer) -> Unit,
     emptyHint: String? = null,
+    /** Added to local LazyRow index when reporting focus (multi-row live grid). */
+    indexOffset: Int = 0,
+    cardWidth: Dp = 240.dp,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.padding(bottom = TvLayout.SectionTitleBottom),
-        )
+        if (title.isNotBlank()) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.padding(bottom = TvLayout.SectionTitleBottom),
+            )
+        }
         if (rooms.isEmpty()) {
             Text(
                 text = emptyHint ?: "暂无内容",
@@ -68,10 +78,12 @@ fun RoomRow(
         }
 
         val listState = rememberLazyListState()
-        LaunchedEffect(focusedIndex, rooms.size) {
+        // Only auto-scroll when the remembered global index lands in this row.
+        val localFocused = focusedIndex - indexOffset
+        LaunchedEffect(localFocused, rooms.size) {
             if (rooms.isEmpty()) return@LaunchedEffect
-            val target = focusedIndex.coerceIn(0, rooms.lastIndex)
-            listState.animateScrollToItem(target)
+            if (localFocused !in rooms.indices) return@LaunchedEffect
+            listState.animateScrollToItem(localFocused)
         }
 
         LazyRow(
@@ -87,9 +99,9 @@ fun RoomRow(
                     room = room,
                     onClick = { onOpenRoom(room) },
                     modifier = Modifier
-                        .width(280.dp)
+                        .width(cardWidth)
                         .onFocusChanged { state ->
-                            if (state.isFocused) onFocusedIndex(index)
+                            if (state.isFocused) onFocusedIndex(indexOffset + index)
                         },
                 )
             }
