@@ -8,6 +8,7 @@ import android.graphics.Typeface
 import android.util.AttributeSet
 import android.view.Choreographer
 import android.view.View
+import com.dtv.androidtv.data.library.DanmakuStyle
 import com.dtv.androidtv.data.model.DanmakuMessage
 import com.dtv.androidtv.data.model.DanmakuMode
 
@@ -15,10 +16,7 @@ import com.dtv.androidtv.data.model.DanmakuMode
  * Plain Android Canvas danmaku layer for Media3 [androidx.media3.ui.PlayerView]
  * [androidx.media3.ui.PlayerView.getOverlayFrameLayout].
  *
- * Compose / nested ComposeView overlays have failed repeatedly on Sony Leanback
- * (SurfaceView punch-through, then TextureView + Compose sibling / nested
- * ComposeView still invisible). Drawing inside PlayerView's official overlay
- * FrameLayout with a normal View is the reliable path.
+ * Visual knobs ([DanmakuStyle]) come from LibraryStore / player chrome cycles.
  */
 class DanmakuCanvasView @JvmOverloads constructor(
     context: Context,
@@ -32,37 +30,35 @@ class DanmakuCanvasView @JvmOverloads constructor(
         val bornMs: Long,
         val durationMs: Long,
         val color: Int,
-        val textWidth: Float,
+        var textWidth: Float,
     )
 
     private val active = ArrayList<Bullet>(32)
     private val seen = LinkedHashSet<String>(256)
     private val trackFreeAt = LongArray(16)
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = sp(28f)
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         color = Color.WHITE
         setShadowLayer(6f, 0f, 0f, Color.BLACK)
     }
     private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = textPaint.textSize
         typeface = textPaint.typeface
         style = Paint.Style.STROKE
-        strokeWidth = sp(2.5f) / 3f
         color = Color.BLACK
     }
 
     private var overlayEnabled = true
     private var choreographerRegistered = false
     private var lastMessages: List<DanmakuMessage> = emptyList()
+    private var style: DanmakuStyle = DanmakuStyle()
 
     init {
         setWillNotDraw(false)
-        // Transparent so TextureView video shows through; we only paint glyphs.
         setBackgroundColor(Color.TRANSPARENT)
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
         isClickable = false
         isFocusable = false
+        applyPaintFromStyle()
     }
 
     fun setOverlayEnabled(enabled: Boolean) {
@@ -74,9 +70,23 @@ class DanmakuCanvasView @JvmOverloads constructor(
             trackFreeAt.fill(0L)
             invalidate()
         } else {
-            // Re-admit from last buffer after toggle-on.
             submit(lastMessages)
         }
+    }
+
+    /** Live-apply font / opacity / scroll duration (desktop danmu settings). */
+    fun applyStyle(next: DanmakuStyle) {
+        val n = DanmakuStyle.normalize(next.fontSizePx, next.opacity, next.durationMs)
+        if (n == style) return
+        style = n
+        applyPaintFromStyle()
+        // Remeasure active glyphs after font change; opacity is paint-time.
+        for (i in active.indices) {
+            val b = active[i]
+            active[i] = b.copy(textWidth = textPaint.measureText(b.text))
+        }
+        ensureChoreographer()
+        invalidate()
     }
 
     /** Push the ViewModel ring buffer; admission is incremental via [seen]. */
@@ -102,6 +112,8 @@ class DanmakuCanvasView @JvmOverloads constructor(
             maxActive = DanmakuTvDefaults.MAX_ACTIVE,
             trackFreeAt = trackFreeAt,
             nowMs = now,
+            scrollDurationMs = style.durationMs,
+            fixedDurationMs = DanmakuTvDefaults.FIXED_DURATION_MS,
         )
         for (c in admitted) {
             val text = c.message.content
@@ -163,7 +175,8 @@ class DanmakuCanvasView @JvmOverloads constructor(
         val baselineOffset = -fontMetrics.ascent
 
         for (b in active) {
-            textPaint.color = withAlpha(b.color, DanmakuTvDefaults.OPACITY)
+            textPaint.color = withAlpha(b.color, style.opacity)
+            strokePaint.color = withAlpha(Color.BLACK, (style.opacity * 0.95f).coerceIn(0.2f, 1f))
             strokePaint.textSize = textPaint.textSize
             when (b.mode) {
                 DanmakuMode.SCROLL -> {
@@ -189,6 +202,13 @@ class DanmakuCanvasView @JvmOverloads constructor(
                 }
             }
         }
+    }
+
+    private fun applyPaintFromStyle() {
+        val size = sp(style.fontSizePx.toFloat())
+        textPaint.textSize = size
+        strokePaint.textSize = size
+        strokePaint.strokeWidth = (size / 12f).coerceAtLeast(1.5f)
     }
 
     private fun ensureChoreographer() {
