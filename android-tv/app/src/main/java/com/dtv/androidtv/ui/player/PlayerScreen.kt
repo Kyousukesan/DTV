@@ -1,8 +1,8 @@
 package com.dtv.androidtv.ui.player
 
 import android.view.KeyEvent
+import android.view.LayoutInflater
 import android.view.ViewGroup
-import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
@@ -45,6 +45,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.dtv.androidtv.DtvTvApp
+import com.dtv.androidtv.R
 import com.dtv.androidtv.data.DtvApi
 import com.dtv.androidtv.player.StreamPlayback
 import com.dtv.androidtv.ui.TvLayout
@@ -197,22 +198,22 @@ fun PlayerScreen(
         if (!state.notLive && state.error == null) {
             AndroidView(
                 factory = { ctx ->
-                    PlayerView(ctx).apply {
-                        layoutParams = FrameLayout.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                        )
-                        // TextureView (not SurfaceView) so Compose overlays (danmaku)
-                        // composite correctly instead of being punched through.
-                        setSurfaceType(PlayerView.SURFACE_TYPE_TEXTURE_VIEW)
-                        // Keep DPAD / focus on Compose chrome, not the PlayerView tree.
-                        isFocusable = false
-                        isFocusableInTouchMode = false
-                        descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
-                        // TV chrome is Compose-driven; hide Media3 touch controller.
-                        useController = false
-                        player = playback.player
-                    }
+                    // Inflate with app:surface_type=texture_view — Media3 1.5 keeps
+                    // setSurfaceType private; SurfaceView would punch through Compose.
+                    (LayoutInflater.from(ctx)
+                        .inflate(R.layout.player_view_texture, null, false) as PlayerView)
+                        .apply {
+                            layoutParams = ViewGroup.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                            )
+                            // Keep DPAD / focus on Compose chrome, not the PlayerView tree.
+                            isFocusable = false
+                            isFocusableInTouchMode = false
+                            descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+                            useController = false
+                            player = playback.player
+                        }
                 },
                 modifier = Modifier.fillMaxSize(),
                 update = { it.player = playback.player },
