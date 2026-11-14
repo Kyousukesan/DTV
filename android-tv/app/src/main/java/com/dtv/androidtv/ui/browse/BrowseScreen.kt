@@ -2,19 +2,17 @@ package com.dtv.androidtv.ui.browse
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -33,6 +31,7 @@ import androidx.tv.material3.Text
 import com.dtv.androidtv.DtvTvApp
 import com.dtv.androidtv.data.PlatformCatalog
 import com.dtv.androidtv.data.model.Category
+import com.dtv.androidtv.data.model.CategoryGroup
 import com.dtv.androidtv.data.model.LivePlatform
 import com.dtv.androidtv.data.model.Streamer
 import com.dtv.androidtv.ui.TvActionButton
@@ -41,7 +40,12 @@ import com.dtv.androidtv.ui.TvScreenBackground
 import com.dtv.androidtv.ui.TvStatusBlock
 import com.dtv.androidtv.ui.components.CategoryChip
 import com.dtv.androidtv.ui.components.RoomRow
+import com.dtv.androidtv.ui.components.StreamerGrid
 
+/**
+ * TV home browse mirroring desktop [HomeScreen]:
+ * platform → 关注/最近 → cate1+cate2 CategoryBar → StreamerGrid.
+ */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun BrowseScreen(
@@ -56,7 +60,6 @@ fun BrowseScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    // Returning from player: reload library rows so recent/follows stay current.
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
@@ -65,6 +68,13 @@ fun BrowseScreen(
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // Prefetch next page when DPAD focus nears the end of the grid.
+    LaunchedEffect(state.focusLive, state.rooms.size, state.hasMore) {
+        if (state.hasMore && state.rooms.isNotEmpty() && state.focusLive >= state.rooms.size - GRID_COLUMNS) {
+            viewModel.loadMore()
+        }
     }
 
     TvScreenBackground {
@@ -84,8 +94,17 @@ fun BrowseScreen(
                         style = MaterialTheme.typography.displaySmall,
                         color = MaterialTheme.colorScheme.primary,
                     )
+                    val subtitle = buildString {
+                        append(catalog.label(state.platform))
+                        if (state.selectedGroupName.isNotBlank()) {
+                            append(" · ").append(state.selectedGroupName)
+                        }
+                        if (state.selectedCategoryName.isNotBlank()) {
+                            append(" / ").append(state.selectedCategoryName)
+                        }
+                    }
                     Text(
-                        text = "${catalog.label(state.platform)} · 关注 / 最近 / ${state.selectedCategoryName}",
+                        text = subtitle,
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),
                         modifier = Modifier.padding(top = 4.dp),
@@ -105,7 +124,7 @@ fun BrowseScreen(
                 labelOf = catalog::label,
                 onClick = { platform, index -> viewModel.selectPlatform(platform, index) },
             )
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(12.dp))
 
             when {
                 state.loading && state.rooms.isEmpty() && state.follows.isEmpty() && state.recent.isEmpty() -> {
@@ -120,101 +139,81 @@ fun BrowseScreen(
                     )
                 }
                 else -> {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(TvLayout.RowSpacing),
-                        contentPadding = PaddingValues(bottom = 28.dp),
-                    ) {
-                        item(key = "follows") {
-                            RoomRow(
-                                title = "关注",
-                                rooms = state.follows,
-                                focusedIndex = state.focusFollows,
-                                onFocusedIndex = viewModel::setFocusFollows,
+                    // Compact library shelves (TV-only; desktop keeps these elsewhere).
+                    RoomRow(
+                        title = "关注",
+                        rooms = state.follows,
+                        focusedIndex = state.focusFollows,
+                        onFocusedIndex = viewModel::setFocusFollows,
+                        onOpenRoom = { room ->
+                            viewModel.openRoom(room)
+                            onOpenRoom(room)
+                        },
+                        emptyHint = "播放页选择「关注本房间」后会出现在这里",
+                        cardWidth = 200.dp,
+                    )
+                    Spacer(Modifier.height(TvLayout.RowSpacing))
+                    RoomRow(
+                        title = "最近观看",
+                        rooms = state.recent,
+                        focusedIndex = state.focusRecent,
+                        onFocusedIndex = viewModel::setFocusRecent,
+                        onOpenRoom = { room ->
+                            viewModel.openRoom(room)
+                            onOpenRoom(room)
+                        },
+                        emptyHint = "打开过的直播间会出现在这里",
+                        cardWidth = 200.dp,
+                    )
+                    Spacer(Modifier.height(TvLayout.RowSpacing))
+
+                    CategoryBar(
+                        groups = state.groups,
+                        selectedGroupId = state.selectedGroupId,
+                        categories = state.categories,
+                        selectedCategoryId = state.selectedCategoryId,
+                        focusGroup = state.focusGroup,
+                        focusCategory = state.focusCategory,
+                        onFocusGroup = viewModel::setFocusGroup,
+                        onFocusCategory = viewModel::setFocusCategory,
+                        onSelectGroup = { group, index -> viewModel.selectGroup(group, index) },
+                        onSelectCategory = { category, index ->
+                            viewModel.selectCategory(category, index)
+                        },
+                    )
+                    Spacer(Modifier.height(10.dp))
+
+                    when {
+                        state.loading && state.rooms.isEmpty() -> {
+                            Text(
+                                "加载分区直播…",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                            )
+                        }
+                        else -> {
+                            Text(
+                                text = "直播 · ${state.selectedCategoryName.ifBlank { "全部" }}",
+                                style = MaterialTheme.typography.titleLarge,
+                                color = MaterialTheme.colorScheme.onBackground,
+                                modifier = Modifier.padding(bottom = TvLayout.SectionTitleBottom),
+                            )
+                            StreamerGrid(
+                                rooms = state.rooms,
+                                focusedIndex = state.focusLive,
+                                onFocusedIndex = viewModel::setFocusLive,
                                 onOpenRoom = { room ->
                                     viewModel.openRoom(room)
                                     onOpenRoom(room)
                                 },
-                                emptyHint = "播放页选择「关注本房间」后会出现在这里",
+                                columns = GRID_COLUMNS,
+                                loadingMore = state.loadingMore,
+                                emptyHint = state.error
+                                    ?: "这个分区暂时没有主播在播",
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxWidth(),
                             )
-                        }
-                        item(key = "recent") {
-                            RoomRow(
-                                title = "最近观看",
-                                rooms = state.recent,
-                                focusedIndex = state.focusRecent,
-                                onFocusedIndex = viewModel::setFocusRecent,
-                                onOpenRoom = { room ->
-                                    viewModel.openRoom(room)
-                                    onOpenRoom(room)
-                                },
-                                emptyHint = "打开过的直播间会出现在这里",
-                            )
-                        }
-                        item(key = "categories") {
-                            CategoryRow(
-                                categories = state.categories,
-                                selectedId = state.selectedCategoryId,
-                                focusedIndex = state.focusCategory,
-                                onFocusedIndex = viewModel::setFocusCategory,
-                                onClick = { category, index ->
-                                    viewModel.selectCategory(category, index)
-                                },
-                            )
-                        }
-                        // Live rooms as several horizontal rows (TV browse density),
-                        // not one sparse LazyRow that looks like a single shelf.
-                        if (state.loading && state.rooms.isEmpty()) {
-                            item(key = "live-loading") {
-                                Text(
-                                    "加载分区直播…",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
-                                )
-                            }
-                        } else if (state.rooms.isEmpty()) {
-                            item(key = "live-empty") {
-                                RoomRow(
-                                    title = "直播 · ${state.selectedCategoryName}",
-                                    rooms = emptyList(),
-                                    focusedIndex = 0,
-                                    onFocusedIndex = {},
-                                    onOpenRoom = {},
-                                    emptyHint = state.error
-                                        ?: "该分区暂无直播，试试其他分区或平台",
-                                )
-                            }
-                        } else {
-                            val perRow = LIVE_CARDS_PER_ROW
-                            val rowCount = (state.rooms.size + perRow - 1) / perRow
-                            items(
-                                count = rowCount,
-                                key = { row -> "live-row-$row" },
-                            ) { row ->
-                                val start = row * perRow
-                                val end = minOf(start + perRow, state.rooms.size)
-                                val slice = state.rooms.subList(start, end)
-                                RoomRow(
-                                    title = if (row == 0) {
-                                        "直播 · ${state.selectedCategoryName}"
-                                    } else {
-                                        ""
-                                    },
-                                    rooms = slice,
-                                    focusedIndex = state.focusLive,
-                                    indexOffset = start,
-                                    onFocusedIndex = { index ->
-                                        viewModel.setFocusLive(index)
-                                        if (index >= state.rooms.size - perRow) {
-                                            viewModel.loadMore()
-                                        }
-                                    },
-                                    onOpenRoom = { room ->
-                                        viewModel.openRoom(room)
-                                        onOpenRoom(room)
-                                    },
-                                )
-                            }
                         }
                     }
                 }
@@ -223,8 +222,12 @@ fun BrowseScreen(
     }
 }
 
+/** Desktop StreamerGrid density target for 1080p TV. */
+private const val GRID_COLUMNS = 4
+
 @OptIn(ExperimentalTvMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
+@Suppress("UNUSED_PARAMETER")
 private fun PlatformRow(
     selected: LivePlatform,
     focusedIndex: Int,
@@ -260,20 +263,29 @@ private fun PlatformRow(
     }
 }
 
+/**
+ * Two-row category bar matching desktop CategoryBar (cate1 tabs + cate2 chips).
+ * Douyu L3 skipped — TV API has no listSubCategories yet.
+ */
 @OptIn(ExperimentalTvMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
 @Suppress("UNUSED_PARAMETER")
-private fun CategoryRow(
+private fun CategoryBar(
+    groups: List<CategoryGroup>,
+    selectedGroupId: String,
     categories: List<Category>,
-    selectedId: String,
-    focusedIndex: Int,
-    onFocusedIndex: (Int) -> Unit,
-    onClick: (Category, Int) -> Unit,
+    selectedCategoryId: String,
+    focusGroup: Int,
+    focusCategory: Int,
+    onFocusGroup: (Int) -> Unit,
+    onFocusCategory: (Int) -> Unit,
+    onSelectGroup: (CategoryGroup, Int) -> Unit,
+    onSelectCategory: (Category, Int) -> Unit,
 ) {
-    if (categories.isEmpty()) return
+    if (groups.isEmpty()) return
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
-            text = "分区",
+            text = "一级分区",
             style = MaterialTheme.typography.titleLarge,
             modifier = Modifier.padding(bottom = TvLayout.SectionTitleBottom),
         )
@@ -282,22 +294,47 @@ private fun CategoryRow(
             contentPadding = TvLayout.RowContentPadding,
             modifier = Modifier.focusRestorer(),
         ) {
-            itemsIndexed(categories, key = { _, c -> c.id }) { index, category ->
+            itemsIndexed(groups, key = { _, g -> g.id }) { index, group ->
                 CategoryChip(
-                    label = category.name,
-                    selected = category.id == selectedId,
+                    label = group.name,
+                    selected = group.id == selectedGroupId,
                     onClick = {
-                        onFocusedIndex(index)
-                        onClick(category, index)
+                        onFocusGroup(index)
+                        onSelectGroup(group, index)
                     },
-                    modifier = Modifier.onFocusChanged { state ->
-                        if (state.isFocused) onFocusedIndex(index)
+                    modifier = Modifier.onFocusChanged { focus ->
+                        if (focus.isFocused) onFocusGroup(index)
                     },
                 )
             }
         }
+
+        if (categories.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = "二级分区",
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.padding(bottom = TvLayout.SectionTitleBottom),
+            )
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = TvLayout.RowContentPadding,
+                modifier = Modifier.focusRestorer(),
+            ) {
+                itemsIndexed(categories, key = { _, c -> c.id }) { index, category ->
+                    CategoryChip(
+                        label = category.name,
+                        selected = category.id == selectedCategoryId,
+                        onClick = {
+                            onFocusCategory(index)
+                            onSelectCategory(category, index)
+                        },
+                        modifier = Modifier.onFocusChanged { focus ->
+                            if (focus.isFocused) onFocusCategory(index)
+                        },
+                    )
+                }
+            }
+        }
     }
 }
-
-/** Cards per live shelf — denser vertical browse than one long horizontal row. */
-private const val LIVE_CARDS_PER_ROW = 4
