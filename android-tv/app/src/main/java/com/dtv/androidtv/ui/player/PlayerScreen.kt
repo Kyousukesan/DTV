@@ -2,8 +2,8 @@ package com.dtv.androidtv.ui.player
 
 import android.view.KeyEvent
 import android.view.LayoutInflater
+import android.view.TextureView
 import android.view.ViewGroup
-import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
@@ -32,9 +32,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
@@ -50,20 +48,15 @@ import androidx.tv.material3.Text
 import com.dtv.androidtv.DtvTvApp
 import com.dtv.androidtv.R
 import com.dtv.androidtv.data.DtvApi
-import com.dtv.androidtv.data.model.DanmakuMessage
 import com.dtv.androidtv.player.StreamPlayback
 import com.dtv.androidtv.ui.TvLayout
 import kotlinx.coroutines.delay
 
-/**
- * Stable holder so [ComposeView.setContent] runs once in factory; [update] only
- * mutates state (re-calling setContent would reset DanmakuOverlay remember).
- */
-private class DanmakuOverlayHostState {
-    var messages by mutableStateOf<List<DanmakuMessage>>(emptyList())
-    var enabled by mutableStateOf(true)
-    var show by mutableStateOf(false)
-}
+/** Keeps PlayerView + canvas danmaku handles for [AndroidView] update. */
+private class PlayerHostViews(
+    val playerView: PlayerView,
+    val danmaku: DanmakuCanvasView,
+)
 
 @OptIn(UnstableApi::class)
 @kotlin.OptIn(ExperimentalTvMaterial3Api::class)
@@ -91,12 +84,6 @@ fun PlayerScreen(
     val rootFocus = remember { FocusRequester() }
     val playPauseFocus = remember { FocusRequester() }
     var isPlaying by remember { mutableStateOf(true) }
-    // Danmaku ComposeView lives inside the PlayerView FrameLayout (Android
-    // child z-order) so Sony/Leanback cannot leave TextureView above Compose siblings.
-    val danmakuHost = remember { DanmakuOverlayHostState() }
-    danmakuHost.messages = state.danmakuMessages
-    danmakuHost.enabled = state.danmakuEnabled
-    danmakuHost.show = roomId != "test" && state.danmakuSupported
 
     // Desktop Esc: overlays → exit fullscreen → navigate.
     // TV Back maps the same layering: reveal chrome first, then leave the room.
@@ -188,7 +175,6 @@ fun PlayerScreen(
                     KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
                     -> {
                         if (!state.chromeVisible && state.error == null && !state.notLive) {
-                            // First OK: show chrome (focus lands on play/pause).
                             viewModel.setChromeVisible(true)
                             true
                         } else if (!state.chromeVisible) {
@@ -197,7 +183,6 @@ fun PlayerScreen(
                             false
                         }
                     }
-                    // Any DPAD while idle reveals chrome (desktop: mouse move shows chrome).
                     KeyEvent.KEYCODE_DPAD_UP,
                     KeyEvent.KEYCODE_DPAD_DOWN,
                     KeyEvent.KEYCODE_DPAD_LEFT,
@@ -216,65 +201,57 @@ fun PlayerScreen(
             },
     ) {
         if (!state.notLive && state.error == null) {
+            val showDanmaku = roomId != "test" && state.danmakuSupported
             AndroidView(
                 factory = { ctx ->
-                    // FrameLayout child order = draw order: TextureView PlayerView,
-                    // then ComposeView danmaku (matches desktop video < danmu < chrome).
-                    FrameLayout(ctx).apply {
-                        layoutParams = ViewGroup.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                        )
-                        isFocusable = false
-                        isFocusableInTouchMode = false
-                        descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+                    // TextureView surface (XML) + Canvas danmaku inside Media3's
+                    // official exo_overlay — above the video surface, below chrome.
+                    (LayoutInflater.from(ctx)
+                        .inflate(R.layout.player_view_texture, null, false) as PlayerView)
+                        .apply {
+                            layoutParams = ViewGroup.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                            )
+                            isFocusable = false
+                            isFocusableInTouchMode = false
+                            descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+                            useController = false
+                            player = playback.player
 
-                        // Inflate with app:surface_type=texture_view — Media3 1.5 keeps
-                        // setSurfaceType private; SurfaceView would punch through overlays.
-                        val playerView = (LayoutInflater.from(ctx)
-                            .inflate(R.layout.player_view_texture, this, false) as PlayerView)
-                            .apply {
-                                layoutParams = FrameLayout.LayoutParams(
+                            val surface = videoSurfaceView
+                            android.util.Log.i(
+                                "PlayerScreen",
+                                "surface=${surface?.javaClass?.simpleName} " +
+                                    "texture=${surface is TextureView}",
+                            )
+
+                            val danmaku = DanmakuCanvasView(ctx).apply {
+                                layoutParams = ViewGroup.LayoutParams(
                                     ViewGroup.LayoutParams.MATCH_PARENT,
                                     ViewGroup.LayoutParams.MATCH_PARENT,
                                 )
-                                isFocusable = false
-                                isFocusableInTouchMode = false
-                                useController = false
-                                player = playback.player
+                                elevation = 4f
                             }
-                        addView(playerView)
-
-                        val overlayView = ComposeView(ctx).apply {
-                            layoutParams = FrameLayout.LayoutParams(
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                            )
-                            isClickable = false
-                            isFocusable = false
-                            setViewCompositionStrategy(
-                                ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed,
-                            )
-                            // setContent once; host state drives recomposition.
-                            setContent {
-                                if (danmakuHost.show) {
-                                    DanmakuOverlay(
-                                        messages = danmakuHost.messages,
-                                        enabled = danmakuHost.enabled,
-                                        modifier = Modifier.fillMaxSize(),
-                                    )
-                                }
-                            }
+                            val overlay = overlayFrameLayout
+                                ?: error("PlayerView missing exo_overlay")
+                            overlay.addView(danmaku)
+                            tag = PlayerHostViews(this, danmaku)
                         }
-                        addView(overlayView)
-                        tag = playerView
-                    }
                 },
                 modifier = Modifier
                     .fillMaxSize()
                     .zIndex(0f),
-                update = { frame ->
-                    (frame.tag as? PlayerView)?.player = playback.player
+                update = { playerView ->
+                    val host = playerView.tag as PlayerHostViews
+                    host.playerView.player = playback.player
+                    if (showDanmaku) {
+                        host.danmaku.setOverlayEnabled(state.danmakuEnabled)
+                        host.danmaku.submit(state.danmakuMessages)
+                    } else {
+                        host.danmaku.setOverlayEnabled(false)
+                        host.danmaku.submit(emptyList())
+                    }
                 },
             )
         }
@@ -322,7 +299,11 @@ fun PlayerScreen(
             state.chromeVisible -> {
                 val qualityText = state.selected?.let { "${it.label} · ${it.format.uppercase()}" }
                 val lineText = state.lineLabel
-                // Desktop: danmu z≈7, chrome z≈20 — chrome must sit above the overlay host.
+                val danmakuLabel = when {
+                    !state.danmakuEnabled -> "弹幕：关"
+                    state.danmakuChatCount > 0 -> "弹幕：开 · ${state.danmakuChatCount}"
+                    else -> "弹幕：开"
+                }
                 Box(Modifier.zIndex(2f).fillMaxSize()) {
                     PlayerChrome(
                         nickname = state.info?.nickname
@@ -334,7 +315,7 @@ fun PlayerScreen(
                             lineText?.let { "线路 $it" },
                         ).joinToString(" · ").ifBlank { null },
                         followed = state.followed,
-                        danmakuEnabled = state.danmakuEnabled,
+                        danmakuButtonLabel = danmakuLabel,
                         playPauseFocus = playPauseFocus,
                         isPlaying = isPlaying,
                         canCycleQuality = state.canCycleQuality,
@@ -369,7 +350,7 @@ private fun PlayerChrome(
     title: String,
     qualityLabel: String?,
     followed: Boolean,
-    danmakuEnabled: Boolean,
+    danmakuButtonLabel: String,
     playPauseFocus: FocusRequester,
     isPlaying: Boolean,
     canCycleQuality: Boolean,
@@ -452,7 +433,7 @@ private fun PlayerChrome(
             }
             if (showDanmakuToggle) {
                 ChromeButton(
-                    label = if (danmakuEnabled) "弹幕：开" else "弹幕：关",
+                    label = danmakuButtonLabel,
                     onClick = onToggleDanmaku,
                 )
             }
