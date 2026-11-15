@@ -8,7 +8,9 @@ import com.dtv.androidtv.data.DtvApi
 import com.dtv.androidtv.data.PlatformCatalog
 import com.dtv.androidtv.data.danmaku.DanmakuSessions
 import com.dtv.androidtv.data.library.LibraryStore
+import com.dtv.androidtv.data.model.DanmakuKind
 import com.dtv.androidtv.data.model.DanmakuMessage
+import com.dtv.androidtv.data.model.DanmakuMode
 import com.dtv.androidtv.data.model.LivePlatform
 import com.dtv.androidtv.data.model.StreamInfo
 import com.dtv.androidtv.data.model.StreamVariant
@@ -35,6 +37,8 @@ data class PlayerUiState(
     /** Platform has a danmaku backend (all four live platforms). */
     val danmakuSupported: Boolean = false,
     val danmakuMessages: List<DanmakuMessage> = emptyList(),
+    /** Chat messages accepted this session (ENTER/gift excluded). Shown on chrome. */
+    val danmakuChatCount: Int = 0,
     /** True while switching line (re-fetch StreamInfo) without leaving the room. */
     val switching: Boolean = false,
 ) {
@@ -81,7 +85,10 @@ class PlayerViewModel(
             viewModelScope.launch {
                 var accepted = 0
                 manager.events.collect { event ->
-                    if (event.roomId != roomId && roomId != "test") return@collect
+                    val liveRoom = _state.value.info?.roomId?.trim().orEmpty()
+                    val matches = event.roomId == roomId ||
+                        (liveRoom.isNotEmpty() && event.roomId == liveRoom)
+                    if (!matches && roomId != "test") return@collect
                     accepted += 1
                     if (accepted == 1 || accepted % 25 == 0) {
                         android.util.Log.i(
@@ -91,8 +98,12 @@ class PlayerViewModel(
                         )
                     }
                     _state.update { ui ->
+                        val isChat = event.message.kind == DanmakuKind.CHAT
                         val next = (ui.danmakuMessages + event.message).takeLast(MAX_DANMAKU_BUFFER)
-                        ui.copy(danmakuMessages = next)
+                        ui.copy(
+                            danmakuMessages = next,
+                            danmakuChatCount = if (isChat) ui.danmakuChatCount + 1 else ui.danmakuChatCount,
+                        )
                     }
                 }
             }
@@ -127,6 +138,7 @@ class PlayerViewModel(
                             error = null,
                             chromeVisible = true,
                             danmakuMessages = emptyList(),
+                            danmakuChatCount = 0,
                         )
                     }
                     return@launch
@@ -146,6 +158,7 @@ class PlayerViewModel(
                         notLive = false,
                         followed = library.isFollowed(platformId, info.roomId),
                         danmakuMessages = emptyList(),
+                        danmakuChatCount = 0,
                     )
                 }
                 syncDanmakuSession()
@@ -315,7 +328,27 @@ class PlayerViewModel(
         val ui = _state.value
         val live = ui.info?.isLive == true && !ui.notLive && ui.error == null
         if (ui.danmakuEnabled && live) {
-            manager.start(roomId)
+            // Prefer platform room id from StreamInfo when browse id differs.
+            val danmakuRoom = ui.info?.roomId?.trim().orEmpty().ifBlank { roomId }
+            manager.start(danmakuRoom)
+            // One-shot local probe so a working draw path is visible even before
+            // the first chat packet (quiet rooms / ENTER-only traffic).
+            val probeId = "local:ready:$danmakuRoom"
+            _state.update { s ->
+                if (s.danmakuMessages.any { it.id == probeId }) s
+                else {
+                    val probe = DanmakuMessage(
+                        id = probeId,
+                        nickname = "",
+                        content = "弹幕层已就绪",
+                        kind = DanmakuKind.SYSTEM,
+                        at = System.currentTimeMillis(),
+                        mode = DanmakuMode.TOP,
+                    )
+                    s.copy(danmakuMessages = (s.danmakuMessages + probe).takeLast(MAX_DANMAKU_BUFFER))
+                }
+            }
+            android.util.Log.i("PlayerDanmaku", "session start room=$danmakuRoom surface-probe queued")
         } else {
             stopDanmakuSession()
         }
