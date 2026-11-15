@@ -1,9 +1,16 @@
 package com.dtv.androidtv.ui.player
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.media.MediaMetadata
+import android.media.session.MediaSession
+import android.media.session.PlaybackState
 import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.TextureView
 import android.view.ViewGroup
+import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
@@ -33,6 +40,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
@@ -85,6 +93,12 @@ fun PlayerScreen(
     val rootFocus = remember { FocusRequester() }
     val playPauseFocus = remember { FocusRequester() }
     var isPlaying by remember { mutableStateOf(true) }
+
+    // Sony / Leanback: without keep-screen-on + active MediaSession, live play
+    // still trips screensaver/standby after the idle timeout.
+    val keepAwakeTitle = state.info?.nickname
+        ?: if (state.useTestHls) "测试流" else fallbackNickname.ifBlank { "直播" }
+    PlayerKeepAwake(isPlaying = isPlaying, title = keepAwakeTitle)
 
     // Desktop Esc: overlays → exit fullscreen → navigate.
     // TV Back maps the same layering: reveal chrome first, then leave the room.
@@ -350,6 +364,72 @@ fun PlayerScreen(
             }
         }
     }
+}
+
+/**
+ * Holds the Activity window awake and publishes a playing MediaSession while
+ * [PlayerScreen] is composed; both are cleared in [DisposableEffect] onDispose
+ * so leaving the player restores normal TV screensaver / standby behavior.
+ */
+@Composable
+private fun PlayerKeepAwake(isPlaying: Boolean, title: String) {
+    val view = LocalView.current
+    val context = LocalContext.current
+    val activity = remember(context) { context.findActivity() }
+    val mediaSession = remember(context) {
+        // setCallback is required before isActive=true on platform MediaSession.
+        MediaSession(context.applicationContext, "dtv-live").apply {
+            setCallback(object : MediaSession.Callback() {})
+        }
+    }
+
+    DisposableEffect(Unit) {
+        val window = activity?.window
+        window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        view.keepScreenOn = true
+        mediaSession.isActive = true
+        onDispose {
+            view.keepScreenOn = false
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            mediaSession.isActive = false
+            mediaSession.release()
+        }
+    }
+
+    // Some OEM dream/screensaver policies key off STATE_PLAYING vs PAUSED.
+    LaunchedEffect(isPlaying, title) {
+        val display = title.ifBlank { "直播" }
+        mediaSession.setMetadata(
+            MediaMetadata.Builder()
+                .putString(MediaMetadata.METADATA_KEY_TITLE, display)
+                .putString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE, display)
+                .build(),
+        )
+        mediaSession.setPlaybackState(
+            PlaybackState.Builder()
+                .setState(
+                    if (isPlaying) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED,
+                    PlaybackState.PLAYBACK_POSITION_UNKNOWN,
+                    if (isPlaying) 1f else 0f,
+                )
+                .setActions(
+                    PlaybackState.ACTION_PLAY or
+                        PlaybackState.ACTION_PAUSE or
+                        PlaybackState.ACTION_PLAY_PAUSE,
+                )
+                .build(),
+        )
+    }
+}
+
+/** Walk ContextWrapper chain to the hosting [Activity] (Compose LocalContext). */
+private fun Context.findActivity(): Activity? {
+    var current: Context? = this
+    while (current is ContextWrapper) {
+        if (current is Activity) return current
+        current = current.baseContext
+    }
+    return current as? Activity
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)

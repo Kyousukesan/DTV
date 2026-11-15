@@ -68,6 +68,9 @@ class StreamPlayback(
     var onRelayEvent: ((String) -> Unit)? = null
 
     init {
+        // WAKE_MODE_NETWORK keeps Wi‑Fi / CPU up during buffer+play (needs WAKE_LOCK).
+        // Screen stay-awake is handled separately via FLAG_KEEP_SCREEN_ON on PlayerScreen.
+        player.setWakeMode(C.WAKE_MODE_NETWORK)
         player.addListener(object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
                 scope.launch { handlePlaybackError(error) }
