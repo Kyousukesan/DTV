@@ -14,7 +14,7 @@ android {
         targetSdk = 35
         versionCode = 1
         // LT-20: danmaku font/opacity/speed settings (past LT-18 canvas).
-        versionName = "0.2.0-lt20"
+        versionName = "0.2.0-lt21"
         // TV leanback launcher + DPAD; phone install not a Slice-1 goal.
         vectorDrawables.useSupportLibrary = true
     }

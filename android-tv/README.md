@@ -71,7 +71,7 @@ Gradle 输出：`app/build/outputs/apk/debug/app-debug.apk`（`applicationId` �
 
 `dist/dtv-tv-debug-<versionName>.apk`
 
-当前 debug：`dist/dtv-tv-debug-0.2.0-lt20-debug.apk`（`versionName` = `0.2.0-lt20` + `-debug`）。
+当前 debug：`dist/dtv-tv-debug-0.2.0-lt21-debug.apk`（`versionName` = `0.2.0-lt21` + `-debug`）。
 
 Release：
 
@@ -83,7 +83,7 @@ Release：
 
 ```bash
 # 启动 TV AVD 后：
-adb install -r dist/dtv-tv-debug-0.2.0-lt20-debug.apk
+adb install -r dist/dtv-tv-debug-0.2.0-lt21-debug.apk
 adb shell am start -n com.dtv.androidtv.debug/com.dtv.androidtv.MainActivity
 ```
 
