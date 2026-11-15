@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import com.dtv.androidtv.BuildConfig
 import com.dtv.androidtv.data.PlatformCatalog
 import com.dtv.androidtv.data.auth.AuthStore
+import com.dtv.androidtv.data.library.DanmakuStyle
+import com.dtv.androidtv.data.library.DanmakuStyleCycles
 import com.dtv.androidtv.data.library.LibraryStore
 import com.dtv.androidtv.data.model.AuthAccount
 import com.dtv.androidtv.data.model.LivePlatform
@@ -27,6 +29,7 @@ data class SettingsUiState(
     val accounts: List<AuthAccount> = emptyList(),
     /** Default for new player sessions (LibraryStore). */
     val danmakuDefaultOn: Boolean = true,
+    val danmakuStyle: DanmakuStyle = DanmakuStyle(),
     val followCount: Int = 0,
     val recentCount: Int = 0,
     val versionLabel: String = "",
@@ -66,6 +69,7 @@ class SettingsViewModel(
             it.copy(
                 accounts = catalog.loginPlatforms.map { p -> authStore.loadAccount(p) },
                 danmakuDefaultOn = library.isDanmakuEnabled(),
+                danmakuStyle = library.getDanmakuStyle(),
                 followCount = library.followCount(),
                 recentCount = library.recentCount(),
                 versionLabel = buildVersionLabel(),
@@ -86,6 +90,36 @@ class SettingsViewModel(
             it.copy(
                 danmakuDefaultOn = next,
                 message = if (next) "新开播房间默认开启弹幕" else "新开播房间默认关闭弹幕",
+            )
+        }
+    }
+
+    fun cycleDanmakuFont() {
+        val next = library.cycleDanmakuFont()
+        _state.update {
+            it.copy(
+                danmakuStyle = next,
+                message = "弹幕字号 ${next.fontSizePx}px",
+            )
+        }
+    }
+
+    fun cycleDanmakuOpacity() {
+        val next = library.cycleDanmakuOpacity()
+        _state.update {
+            it.copy(
+                danmakuStyle = next,
+                message = "弹幕透明度 ${DanmakuStyleCycles.formatOpacity(next.opacity)}",
+            )
+        }
+    }
+
+    fun cycleDanmakuSpeed() {
+        val next = library.cycleDanmakuDuration()
+        _state.update {
+            it.copy(
+                danmakuStyle = next,
+                message = "弹幕速度 ${DanmakuStyleCycles.formatSpeedLabel(next.durationMs)}",
             )
         }
     }

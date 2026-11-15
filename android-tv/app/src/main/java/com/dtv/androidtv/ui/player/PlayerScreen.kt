@@ -48,6 +48,7 @@ import androidx.tv.material3.Text
 import com.dtv.androidtv.DtvTvApp
 import com.dtv.androidtv.R
 import com.dtv.androidtv.data.DtvApi
+import com.dtv.androidtv.data.library.DanmakuStyleCycles
 import com.dtv.androidtv.player.StreamPlayback
 import com.dtv.androidtv.ui.TvLayout
 import kotlinx.coroutines.delay
@@ -246,6 +247,7 @@ fun PlayerScreen(
                     val host = playerView.tag as PlayerHostViews
                     host.playerView.player = playback.player
                     if (showDanmaku) {
+                        host.danmaku.applyStyle(state.danmakuStyle)
                         host.danmaku.setOverlayEnabled(state.danmakuEnabled)
                         host.danmaku.submit(state.danmakuMessages)
                     } else {
@@ -299,6 +301,7 @@ fun PlayerScreen(
             state.chromeVisible -> {
                 val qualityText = state.selected?.let { "${it.label} · ${it.format.uppercase()}" }
                 val lineText = state.lineLabel
+                val style = state.danmakuStyle
                 val danmakuLabel = when {
                     !state.danmakuEnabled -> "弹幕：关"
                     state.danmakuChatCount > 0 -> "弹幕：开 · ${state.danmakuChatCount}"
@@ -316,6 +319,9 @@ fun PlayerScreen(
                         ).joinToString(" · ").ifBlank { null },
                         followed = state.followed,
                         danmakuButtonLabel = danmakuLabel,
+                        fontButtonLabel = "字号 ${style.fontSizePx}",
+                        opacityButtonLabel = "透明 ${DanmakuStyleCycles.formatOpacity(style.opacity)}",
+                        speedButtonLabel = "速度 ${DanmakuStyleCycles.formatSpeedLabel(style.durationMs)}",
                         playPauseFocus = playPauseFocus,
                         isPlaying = isPlaying,
                         canCycleQuality = state.canCycleQuality,
@@ -331,6 +337,9 @@ fun PlayerScreen(
                         },
                         onToggleFollow = { viewModel.toggleFollow() },
                         onToggleDanmaku = { viewModel.toggleDanmaku() },
+                        onCycleFont = { viewModel.cycleDanmakuFont() },
+                        onCycleOpacity = { viewModel.cycleDanmakuOpacity() },
+                        onCycleSpeed = { viewModel.cycleDanmakuSpeed() },
                         onCycleQuality = { viewModel.cycleQuality() },
                         onCycleLine = { viewModel.cycleLine() },
                         onBack = onBack,
@@ -351,6 +360,9 @@ private fun PlayerChrome(
     qualityLabel: String?,
     followed: Boolean,
     danmakuButtonLabel: String,
+    fontButtonLabel: String,
+    opacityButtonLabel: String,
+    speedButtonLabel: String,
     playPauseFocus: FocusRequester,
     isPlaying: Boolean,
     canCycleQuality: Boolean,
@@ -360,6 +372,9 @@ private fun PlayerChrome(
     onPlayPause: () -> Unit,
     onToggleFollow: () -> Unit,
     onToggleDanmaku: () -> Unit,
+    onCycleFont: () -> Unit,
+    onCycleOpacity: () -> Unit,
+    onCycleSpeed: () -> Unit,
     onCycleQuality: () -> Unit,
     onCycleLine: () -> Unit,
     onBack: () -> Unit,
@@ -417,7 +432,7 @@ private fun PlayerChrome(
                     top = 40.dp,
                     bottom = TvLayout.SafeVertical,
                 ),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             ChromeButton(
@@ -436,6 +451,9 @@ private fun PlayerChrome(
                     label = danmakuButtonLabel,
                     onClick = onToggleDanmaku,
                 )
+                ChromeButton(label = fontButtonLabel, onClick = onCycleFont)
+                ChromeButton(label = opacityButtonLabel, onClick = onCycleOpacity)
+                ChromeButton(label = speedButtonLabel, onClick = onCycleSpeed)
             }
             if (canCycleQuality) {
                 ChromeButton(

@@ -7,6 +7,7 @@ import com.dtv.androidtv.DtvTvApp
 import com.dtv.androidtv.data.DtvApi
 import com.dtv.androidtv.data.PlatformCatalog
 import com.dtv.androidtv.data.danmaku.DanmakuSessions
+import com.dtv.androidtv.data.library.DanmakuStyle
 import com.dtv.androidtv.data.library.LibraryStore
 import com.dtv.androidtv.data.model.DanmakuKind
 import com.dtv.androidtv.data.model.DanmakuMessage
@@ -39,6 +40,8 @@ data class PlayerUiState(
     val danmakuMessages: List<DanmakuMessage> = emptyList(),
     /** Chat messages accepted this session (ENTER/gift excluded). Shown on chrome. */
     val danmakuChatCount: Int = 0,
+    /** Font / opacity / scroll duration (LibraryStore, desktop ranges). */
+    val danmakuStyle: DanmakuStyle = DanmakuStyle(),
     /** True while switching line (re-fetch StreamInfo) without leaving the room. */
     val switching: Boolean = false,
 ) {
@@ -75,6 +78,7 @@ class PlayerViewModel(
             followed = roomId != "test" && library.isFollowed(platformId, roomId),
             danmakuEnabled = danmakuSupported && library.isDanmakuEnabled(),
             danmakuSupported = danmakuSupported,
+            danmakuStyle = library.getDanmakuStyle(),
         ),
     )
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
@@ -304,6 +308,27 @@ class PlayerViewModel(
             )
         }
         viewModelScope.launch { syncDanmakuSession() }
+    }
+
+    /** Cycle font size (desktop 14–30 step 2); live-applied on Canvas. */
+    fun cycleDanmakuFont() {
+        if (!danmakuSupported) return
+        val next = library.cycleDanmakuFont()
+        _state.update { it.copy(danmakuStyle = next, chromeVisible = true) }
+    }
+
+    /** Cycle opacity (0.2–1.0). */
+    fun cycleDanmakuOpacity() {
+        if (!danmakuSupported) return
+        val next = library.cycleDanmakuOpacity()
+        _state.update { it.copy(danmakuStyle = next, chromeVisible = true) }
+    }
+
+    /** Cycle scroll duration (5s–20s); new bullets use the new speed. */
+    fun cycleDanmakuSpeed() {
+        if (!danmakuSupported) return
+        val next = library.cycleDanmakuDuration()
+        _state.update { it.copy(danmakuStyle = next, chromeVisible = true) }
     }
 
     suspend fun resolveFreshUrl(quality: String, line: String): String =
