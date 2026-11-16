@@ -1,5 +1,6 @@
 package com.dtv.androidtv.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,29 +11,26 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.tv.material3.Border
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import com.dtv.androidtv.ui.theme.CinemaEmber
 
-/** Shared dark gradient backdrop for browse / search / settings. */
+/** Flat Cinema Ember backdrop (no purple/indigo gradient). */
 @Composable
 fun TvScreenBackground(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    listOf(Color(0xFF0B1020), Color(0xFF16213E), Color(0xFF0B1020)),
-                ),
-            ),
+            .background(CinemaEmber.BgApp),
     ) {
         content()
     }
@@ -40,7 +38,7 @@ fun TvScreenBackground(modifier: Modifier = Modifier, content: @Composable () ->
 
 /**
  * Primary DPAD action chip used in headers and chrome.
- * Focus scale + focused container keep the ring readable at 10-foot.
+ * Focus: warm-gold container + scale (MASTER focus ring semantics via TV Surface).
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -51,18 +49,33 @@ fun TvActionButton(
     emphasized: Boolean = false,
 ) {
     val idleColor = if (emphasized) {
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
+        CinemaEmber.Accent
     } else {
-        MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)
+        CinemaEmber.BgElevated
     }
+    val idleText = if (emphasized) CinemaEmber.TextOnAccent else CinemaEmber.TextPrimary
     Surface(
         onClick = onClick,
         modifier = modifier,
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
+        shape = ClickableSurfaceDefaults.shape(
+            shape = RoundedCornerShape(CinemaEmber.RadiusControl),
+        ),
+        scale = ClickableSurfaceDefaults.scale(
+            focusedScale = CinemaEmber.FocusScale,
+            pressedScale = CinemaEmber.PressScale,
+        ),
+        border = ClickableSurfaceDefaults.border(
+            focusedBorder = Border(
+                border = BorderStroke(CinemaEmber.FocusStroke, CinemaEmber.FocusRing),
+                shape = RoundedCornerShape(CinemaEmber.RadiusControl),
+            ),
+        ),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = idleColor,
-            focusedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.72f),
-            pressedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
+            focusedContainerColor = CinemaEmber.AccentMuted,
+            pressedContainerColor = CinemaEmber.Accent.copy(alpha = 0.55f),
+            contentColor = idleText,
+            focusedContentColor = CinemaEmber.TextPrimary,
         ),
     ) {
         Text(
@@ -72,7 +85,7 @@ fun TvActionButton(
                 vertical = TvLayout.ButtonPaddingV,
             ),
             style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = idleText,
         )
     }
 }
@@ -89,13 +102,17 @@ fun TvStatusBlock(
 ) {
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(title, style = MaterialTheme.typography.headlineSmall)
+            Text(
+                title,
+                style = MaterialTheme.typography.headlineSmall,
+                color = CinemaEmber.TextPrimary,
+            )
             if (!message.isNullOrBlank()) {
                 Spacer(Modifier.height(12.dp))
                 Text(
                     message,
                     style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),
+                    color = CinemaEmber.TextSecondary,
                     modifier = Modifier.padding(horizontal = 32.dp),
                 )
             }
@@ -116,12 +133,16 @@ fun TvSectionHeader(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
-        Text(title, style = MaterialTheme.typography.headlineSmall)
+        Text(
+            title,
+            style = MaterialTheme.typography.headlineSmall,
+            color = CinemaEmber.TextPrimary,
+        )
         if (!subtitle.isNullOrBlank()) {
             Text(
                 subtitle,
                 style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                color = CinemaEmber.TextSecondary,
                 modifier = Modifier.padding(top = 6.dp),
             )
         }
@@ -142,10 +163,19 @@ fun TvSettingsRow(
     Surface(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
+        shape = ClickableSurfaceDefaults.shape(
+            shape = RoundedCornerShape(CinemaEmber.RadiusControl),
+        ),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
+        border = ClickableSurfaceDefaults.border(
+            focusedBorder = Border(
+                border = BorderStroke(CinemaEmber.FocusStroke, CinemaEmber.FocusRing),
+                shape = RoundedCornerShape(CinemaEmber.RadiusControl),
+            ),
+        ),
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
-            focusedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
+            containerColor = CinemaEmber.BgSurface,
+            focusedContainerColor = CinemaEmber.BgSurfaceHover,
         ),
     ) {
         Row(
@@ -156,18 +186,22 @@ fun TvSettingsRow(
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleLarge)
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = CinemaEmber.TextPrimary,
+                )
                 Text(
                     subtitle,
                     style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
+                    color = CinemaEmber.TextSecondary,
                     modifier = Modifier.padding(top = 4.dp),
                 )
             }
             Text(
                 actionLabel,
                 style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
+                color = CinemaEmber.Accent,
                 modifier = Modifier.padding(start = 16.dp),
             )
         }

@@ -4,7 +4,7 @@ Versioned Leanback debug build (`com.dtv.androidtv.debug`):
 
 `dtv-tv-debug-<versionName>.apk`
 
-Example after LT-22: `dtv-tv-debug-0.2.0-lt22-debug.apk`
+Example after LT-23: `dtv-tv-debug-0.2.0-lt23-debug.apk`
 
 Rebuild (also copies into this folder via `copyDebugApkToDist`):
 

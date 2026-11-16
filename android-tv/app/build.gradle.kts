@@ -13,8 +13,8 @@ android {
         minSdk = 24
         targetSdk = 35
         versionCode = 1
-        // LT-22: keep screen on during Player (past LT-21 home grid).
-        versionName = "0.2.0-lt22"
+        // LT-23: Cinema Ember incremental UI overlay (past LT-22 keep-awake).
+        versionName = "0.2.0-lt23"
         // TV leanback launcher + DPAD; phone install not a Slice-1 goal.
         vectorDrawables.useSupportLibrary = true
     }
