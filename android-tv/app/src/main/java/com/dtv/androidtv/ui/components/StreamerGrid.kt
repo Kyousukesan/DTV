@@ -18,6 +18,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.dtv.androidtv.data.model.Streamer
 import com.dtv.androidtv.ui.TvLayout
+import com.dtv.androidtv.ui.theme.CinemaEmber
 
 /**
  * Desktop-style streamer grid (HomeScreen StreamerGrid) for TV DPAD.
@@ -39,7 +40,7 @@ fun StreamerGrid(
         Text(
             text = emptyHint ?: "这个分区暂时没有主播在播",
             style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.58f),
+            color = CinemaEmber.TextSecondary,
             modifier = Modifier.fillMaxWidth().then(modifier),
         )
         return
@@ -79,7 +80,7 @@ fun StreamerGrid(
                 Text(
                     text = "加载更多…",
                     style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f),
+                    color = CinemaEmber.TextSecondary,
                 )
             }
         }

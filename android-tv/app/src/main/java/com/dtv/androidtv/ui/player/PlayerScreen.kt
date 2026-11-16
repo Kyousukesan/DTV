@@ -13,6 +13,12 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
@@ -20,10 +26,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -36,7 +45,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalContext
@@ -48,6 +56,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
+import androidx.tv.material3.Border
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
@@ -59,6 +68,7 @@ import com.dtv.androidtv.data.DtvApi
 import com.dtv.androidtv.data.library.DanmakuStyleCycles
 import com.dtv.androidtv.player.StreamPlayback
 import com.dtv.androidtv.ui.TvLayout
+import com.dtv.androidtv.ui.theme.CinemaEmber
 import kotlinx.coroutines.delay
 
 /** Keeps PlayerView + canvas danmaku handles for [AndroidView] update. */
@@ -92,20 +102,21 @@ fun PlayerScreen(
     val scope = rememberCoroutineScope()
     val rootFocus = remember { FocusRequester() }
     val playPauseFocus = remember { FocusRequester() }
+    val drawerFocus = remember { FocusRequester() }
     var isPlaying by remember { mutableStateOf(true) }
+    // Layer 3: right drawer for danmaku settings (interaction §4.4 / player.md).
+    var danmakuDrawerOpen by remember { mutableStateOf(false) }
 
-    // Sony / Leanback: without keep-screen-on + active MediaSession, live play
-    // still trips screensaver/standby after the idle timeout.
     val keepAwakeTitle = state.info?.nickname
         ?: if (state.useTestHls) "测试流" else fallbackNickname.ifBlank { "直播" }
     PlayerKeepAwake(isPlaying = isPlaying, title = keepAwakeTitle)
 
-    // Desktop Esc: overlays → exit fullscreen → navigate.
-    // TV Back maps the same layering: reveal chrome first, then leave the room.
+    // Back: settings → controls → immersive → home (never skip layers).
     BackHandler {
         when {
             state.error != null || state.notLive -> onBack()
-            !state.chromeVisible -> viewModel.setChromeVisible(true)
+            danmakuDrawerOpen -> danmakuDrawerOpen = false
+            state.chromeVisible -> viewModel.setChromeVisible(false)
             else -> onBack()
         }
     }
@@ -124,6 +135,7 @@ fun PlayerScreen(
         playback.onPlaying = {
             viewModel.clearError()
             viewModel.setChromeVisible(false)
+            danmakuDrawerOpen = false
         }
         playback.onIsPlayingChanged = { playing -> isPlaying = playing }
         playback.onRelayEvent = { event ->
@@ -151,29 +163,44 @@ fun PlayerScreen(
         }
     }
 
-    // Auto-hide chrome while playing (DPAD / OK brings it back).
-    LaunchedEffect(state.chromeVisible, state.error, state.notLive, state.loading, state.switching) {
+    // Auto-hide chrome while playing; pause timer while drawer is open.
+    LaunchedEffect(
+        state.chromeVisible,
+        danmakuDrawerOpen,
+        state.error,
+        state.notLive,
+        state.loading,
+        state.switching,
+    ) {
         if (
             state.chromeVisible &&
+            !danmakuDrawerOpen &&
             state.error == null &&
             !state.notLive &&
             !state.loading &&
             !state.switching
         ) {
-            delay(4_000)
+            delay(5_000)
             viewModel.setChromeVisible(false)
         }
     }
 
-    // When chrome is hidden there are no focusable chrome buttons — keep focus on
-    // the root Box so DPAD_CENTER / ENTER reach onPreviewKeyEvent.
-    LaunchedEffect(state.chromeVisible, state.error, state.notLive) {
+    LaunchedEffect(state.chromeVisible, danmakuDrawerOpen, state.error, state.notLive) {
         if (state.error != null || state.notLive) return@LaunchedEffect
-        if (state.chromeVisible) {
-            runCatching { playPauseFocus.requestFocus() }
-        } else {
-            runCatching { rootFocus.requestFocus() }
+        when {
+            danmakuDrawerOpen -> runCatching { drawerFocus.requestFocus() }
+            state.chromeVisible -> runCatching { playPauseFocus.requestFocus() }
+            else -> runCatching { rootFocus.requestFocus() }
         }
+    }
+
+    fun openChrome() {
+        viewModel.setChromeVisible(true)
+    }
+
+    fun openDanmakuDrawer() {
+        viewModel.setChromeVisible(true)
+        danmakuDrawerOpen = true
     }
 
     Box(
@@ -190,10 +217,22 @@ fun PlayerScreen(
                     KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
                     -> {
                         if (!state.chromeVisible && state.error == null && !state.notLive) {
-                            viewModel.setChromeVisible(true)
+                            openChrome()
                             true
-                        } else if (!state.chromeVisible) {
+                        } else {
                             false
+                        }
+                    }
+                    KeyEvent.KEYCODE_MENU,
+                    -> {
+                        if (state.error == null && !state.notLive &&
+                            roomId != "test" && state.danmakuSupported
+                        ) {
+                            openDanmakuDrawer()
+                            true
+                        } else if (!state.chromeVisible && state.error == null && !state.notLive) {
+                            openChrome()
+                            true
                         } else {
                             false
                         }
@@ -202,10 +241,9 @@ fun PlayerScreen(
                     KeyEvent.KEYCODE_DPAD_DOWN,
                     KeyEvent.KEYCODE_DPAD_LEFT,
                     KeyEvent.KEYCODE_DPAD_RIGHT,
-                    KeyEvent.KEYCODE_MENU,
                     -> {
                         if (!state.chromeVisible && state.error == null && !state.notLive) {
-                            viewModel.setChromeVisible(true)
+                            openChrome()
                             true
                         } else {
                             false
@@ -281,7 +319,7 @@ fun PlayerScreen(
             ) {
                 Text(
                     if (state.switching) "正在切换线路…" else "正在解析直播流…",
-                    color = Color.White,
+                    color = CinemaEmber.TextPrimary,
                     style = MaterialTheme.typography.titleLarge,
                 )
             }
@@ -295,7 +333,7 @@ fun PlayerScreen(
                         message = "主播未开播",
                         primaryLabel = "重试",
                         onPrimary = { viewModel.load() },
-                        secondaryLabel = "返回",
+                        secondaryLabel = "返回首页",
                         onSecondary = onBack,
                     )
                 }
@@ -307,59 +345,84 @@ fun PlayerScreen(
                         message = state.error ?: "",
                         primaryLabel = "重试",
                         onPrimary = { viewModel.load() },
-                        secondaryLabel = "返回",
+                        secondaryLabel = "返回首页",
                         onSecondary = onBack,
                     )
                 }
             }
-            state.chromeVisible -> {
-                val qualityText = state.selected?.let { "${it.label} · ${it.format.uppercase()}" }
-                val lineText = state.lineLabel
+            state.chromeVisible || danmakuDrawerOpen -> {
                 val style = state.danmakuStyle
-                val danmakuLabel = when {
-                    !state.danmakuEnabled -> "弹幕：关"
-                    state.danmakuChatCount > 0 -> "弹幕：开 · ${state.danmakuChatCount}"
-                    else -> "弹幕：开"
-                }
                 Box(Modifier.zIndex(2f).fillMaxSize()) {
-                    PlayerChrome(
-                        nickname = state.info?.nickname
-                            ?: if (state.useTestHls) "测试流" else fallbackNickname,
-                        title = state.info?.title
-                            ?: if (state.useTestHls) "Media3 测试 HLS" else "",
-                        qualityLabel = listOfNotNull(
-                            qualityText?.let { "清晰度 $it" },
-                            lineText?.let { "线路 $it" },
-                        ).joinToString(" · ").ifBlank { null },
-                        followed = state.followed,
-                        danmakuButtonLabel = danmakuLabel,
-                        fontButtonLabel = "字号 ${style.fontSizePx}",
-                        opacityButtonLabel = "透明 ${DanmakuStyleCycles.formatOpacity(style.opacity)}",
-                        speedButtonLabel = "速度 ${DanmakuStyleCycles.formatSpeedLabel(style.durationMs)}",
-                        playPauseFocus = playPauseFocus,
-                        isPlaying = isPlaying,
-                        canCycleQuality = state.canCycleQuality,
-                        canCycleLine = state.canCycleLine,
-                        qualityButtonLabel = state.selected?.label?.let { "切换清晰度：$it" }
-                            ?: "切换清晰度",
-                        lineButtonLabel = state.lineLabel?.let { "切换线路：$it" } ?: "切换线路",
-                        onPlayPause = {
-                            val p = playback.player
-                            if (p.isPlaying) p.pause() else p.play()
-                            isPlaying = p.playWhenReady
-                            viewModel.setChromeVisible(true)
-                        },
-                        onToggleFollow = { viewModel.toggleFollow() },
-                        onToggleDanmaku = { viewModel.toggleDanmaku() },
-                        onCycleFont = { viewModel.cycleDanmakuFont() },
-                        onCycleOpacity = { viewModel.cycleDanmakuOpacity() },
-                        onCycleSpeed = { viewModel.cycleDanmakuSpeed() },
-                        onCycleQuality = { viewModel.cycleQuality() },
-                        onCycleLine = { viewModel.cycleLine() },
-                        onBack = onBack,
-                        showFollow = roomId != "test",
-                        showDanmakuToggle = roomId != "test" && state.danmakuSupported,
-                    )
+                    if (state.chromeVisible && !danmakuDrawerOpen) {
+                        // Light scrim only under chrome — keep picture readable.
+                        Box(
+                            Modifier
+                                .fillMaxSize()
+                                .background(Color.Black.copy(alpha = 0.28f)),
+                        )
+                    }
+                    if (danmakuDrawerOpen) {
+                        Box(
+                            Modifier
+                                .fillMaxSize()
+                                .background(CinemaEmber.Overlay),
+                        )
+                    }
+
+                    if (state.chromeVisible) {
+                        PlayerChrome(
+                            nickname = state.info?.nickname
+                                ?: if (state.useTestHls) "测试流" else fallbackNickname,
+                            title = state.info?.title
+                                ?: if (state.useTestHls) "Media3 测试 HLS" else "",
+                            metaLabel = listOfNotNull(
+                                state.selected?.let { "${it.label} · ${it.format.uppercase()}" },
+                                state.lineLabel,
+                            ).joinToString(" · ").ifBlank { null },
+                            playPauseFocus = playPauseFocus,
+                            isPlaying = isPlaying,
+                            canCycleQuality = state.canCycleQuality,
+                            canCycleLine = state.canCycleLine,
+                            qualityButtonLabel = state.selected?.label?.let { "清晰度：$it" }
+                                ?: "清晰度",
+                            lineButtonLabel = state.lineLabel?.let { "线路：$it" } ?: "线路",
+                            followed = state.followed,
+                            showFollow = roomId != "test",
+                            showDanmaku = roomId != "test" && state.danmakuSupported,
+                            danmakuOn = state.danmakuEnabled,
+                            onPlayPause = {
+                                val p = playback.player
+                                if (p.isPlaying) p.pause() else p.play()
+                                isPlaying = p.playWhenReady
+                                viewModel.setChromeVisible(true)
+                            },
+                            onCycleQuality = { viewModel.cycleQuality() },
+                            onCycleLine = { viewModel.cycleLine() },
+                            onToggleFollow = { viewModel.toggleFollow() },
+                            onOpenDanmaku = { openDanmakuDrawer() },
+                        )
+                    }
+
+                    AnimatedVisibility(
+                        visible = danmakuDrawerOpen,
+                        enter = slideInHorizontally { it } + fadeIn(),
+                        exit = slideOutHorizontally { it } + fadeOut(),
+                        modifier = Modifier.align(Alignment.CenterEnd),
+                    ) {
+                        DanmakuSettingsDrawer(
+                            enabled = state.danmakuEnabled,
+                            fontLabel = "字号 ${style.fontSizePx}",
+                            opacityLabel = "透明 ${DanmakuStyleCycles.formatOpacity(style.opacity)}",
+                            speedLabel = "速度 ${DanmakuStyleCycles.formatSpeedLabel(style.durationMs)}",
+                            chatCount = state.danmakuChatCount,
+                            firstFocus = drawerFocus,
+                            onToggle = { viewModel.toggleDanmaku() },
+                            onCycleFont = { viewModel.cycleDanmakuFont() },
+                            onCycleOpacity = { viewModel.cycleDanmakuOpacity() },
+                            onCycleSpeed = { viewModel.cycleDanmakuSpeed() },
+                            onClose = { danmakuDrawerOpen = false },
+                        )
+                    }
                 }
             }
         }
@@ -377,7 +440,6 @@ private fun PlayerKeepAwake(isPlaying: Boolean, title: String) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
     val mediaSession = remember(context) {
-        // setCallback is required before isActive=true on platform MediaSession.
         MediaSession(context.applicationContext, "dtv-live").apply {
             setCallback(object : MediaSession.Callback() {})
         }
@@ -396,7 +458,6 @@ private fun PlayerKeepAwake(isPlaying: Boolean, title: String) {
         }
     }
 
-    // Some OEM dream/screensaver policies key off STATE_PLAYING vs PAUSED.
     LaunchedEffect(isPlaying, title) {
         val display = title.ifBlank { "直播" }
         mediaSession.setMetadata(
@@ -422,7 +483,6 @@ private fun PlayerKeepAwake(isPlaying: Boolean, title: String) {
     }
 }
 
-/** Walk ContextWrapper chain to the hosting [Activity] (Compose LocalContext). */
 private fun Context.findActivity(): Activity? {
     var current: Context? = this
     while (current is ContextWrapper) {
@@ -432,68 +492,62 @@ private fun Context.findActivity(): Activity? {
     return current as? Activity
 }
 
+/** Top info + bottom control bar (design §5.2 / §6.6.4). */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun PlayerChrome(
     nickname: String,
     title: String,
-    qualityLabel: String?,
-    followed: Boolean,
-    danmakuButtonLabel: String,
-    fontButtonLabel: String,
-    opacityButtonLabel: String,
-    speedButtonLabel: String,
+    metaLabel: String?,
     playPauseFocus: FocusRequester,
     isPlaying: Boolean,
     canCycleQuality: Boolean,
     canCycleLine: Boolean,
     qualityButtonLabel: String,
     lineButtonLabel: String,
+    followed: Boolean,
+    showFollow: Boolean,
+    showDanmaku: Boolean,
+    danmakuOn: Boolean,
     onPlayPause: () -> Unit,
-    onToggleFollow: () -> Unit,
-    onToggleDanmaku: () -> Unit,
-    onCycleFont: () -> Unit,
-    onCycleOpacity: () -> Unit,
-    onCycleSpeed: () -> Unit,
     onCycleQuality: () -> Unit,
     onCycleLine: () -> Unit,
-    onBack: () -> Unit,
-    showFollow: Boolean,
-    showDanmakuToggle: Boolean,
+    onToggleFollow: () -> Unit,
+    onOpenDanmaku: () -> Unit,
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.TopCenter)
-                .background(
-                    Brush.verticalGradient(
-                        listOf(Color.Black.copy(alpha = 0.75f), Color.Transparent),
-                    ),
-                )
+                .background(CinemaEmber.BgElevated.copy(alpha = 0.92f))
                 .padding(
                     start = TvLayout.SafeHorizontal,
                     end = TvLayout.SafeHorizontal,
                     top = TvLayout.SafeVertical,
-                    bottom = 48.dp,
+                    bottom = 16.dp,
                 ),
         ) {
-            Column {
-                Text(nickname, color = Color.White, style = MaterialTheme.typography.headlineSmall)
-                if (title.isNotBlank()) {
-                    Text(
-                        title,
-                        color = Color.White.copy(alpha = 0.85f),
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                }
-                qualityLabel?.let {
-                    Text(
-                        it,
-                        color = Color.White.copy(alpha = 0.65f),
-                        style = MaterialTheme.typography.labelLarge,
-                    )
-                }
+            Text(
+                nickname,
+                color = CinemaEmber.TextPrimary,
+                style = MaterialTheme.typography.titleLarge,
+            )
+            if (title.isNotBlank()) {
+                Text(
+                    title,
+                    color = CinemaEmber.TextSecondary,
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+            metaLabel?.let {
+                Text(
+                    it,
+                    color = CinemaEmber.TextSecondary.copy(alpha = 0.85f),
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
             }
         }
 
@@ -501,15 +555,12 @@ private fun PlayerChrome(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .background(
-                    Brush.verticalGradient(
-                        listOf(Color.Transparent, Color.Black.copy(alpha = 0.8f)),
-                    ),
-                )
+                .height(104.dp)
+                .background(CinemaEmber.BgElevated.copy(alpha = 0.92f))
                 .padding(
                     start = TvLayout.SafeHorizontal,
                     end = TvLayout.SafeHorizontal,
-                    top = 40.dp,
+                    top = 16.dp,
                     bottom = TvLayout.SafeVertical,
                 ),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -520,35 +571,130 @@ private fun PlayerChrome(
                 onClick = onPlayPause,
                 modifier = Modifier.focusRequester(playPauseFocus),
             )
+            if (canCycleQuality) {
+                ChromeButton(label = qualityButtonLabel, onClick = onCycleQuality)
+            }
+            if (canCycleLine) {
+                ChromeButton(label = lineButtonLabel, onClick = onCycleLine)
+            }
+            if (showDanmaku) {
+                ChromeButton(
+                    label = if (danmakuOn) "弹幕设置" else "弹幕：关",
+                    onClick = onOpenDanmaku,
+                )
+            }
             if (showFollow) {
                 ChromeButton(
-                    label = if (followed) "取消关注" else "关注本房间",
+                    label = if (followed) "取消关注" else "关注",
                     onClick = onToggleFollow,
                 )
             }
-            if (showDanmakuToggle) {
-                ChromeButton(
-                    label = danmakuButtonLabel,
-                    onClick = onToggleDanmaku,
-                )
-                ChromeButton(label = fontButtonLabel, onClick = onCycleFont)
-                ChromeButton(label = opacityButtonLabel, onClick = onCycleOpacity)
-                ChromeButton(label = speedButtonLabel, onClick = onCycleSpeed)
-            }
-            if (canCycleQuality) {
-                ChromeButton(
-                    label = qualityButtonLabel,
-                    onClick = onCycleQuality,
-                )
-            }
-            if (canCycleLine) {
-                ChromeButton(
-                    label = lineButtonLabel,
-                    onClick = onCycleLine,
-                )
-            }
             Spacer(Modifier.weight(1f))
-            ChromeButton(label = "退出播放", onClick = onBack)
+            Text(
+                "返回 · 分层退出",
+                color = CinemaEmber.TextSecondary,
+                style = MaterialTheme.typography.labelLarge,
+            )
+        }
+    }
+}
+
+/** Right-side danmaku settings drawer (~38% width). */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun DanmakuSettingsDrawer(
+    enabled: Boolean,
+    fontLabel: String,
+    opacityLabel: String,
+    speedLabel: String,
+    chatCount: Int,
+    firstFocus: FocusRequester,
+    onToggle: () -> Unit,
+    onCycleFont: () -> Unit,
+    onCycleOpacity: () -> Unit,
+    onCycleSpeed: () -> Unit,
+    onClose: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxHeight()
+            .fillMaxWidth(0.38f)
+            .widthIn(min = 360.dp, max = 480.dp)
+            .background(CinemaEmber.BgSurface)
+            .padding(horizontal = 28.dp, vertical = 36.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(
+            "弹幕设置",
+            style = MaterialTheme.typography.titleLarge,
+            color = CinemaEmber.TextPrimary,
+        )
+        Text(
+            if (chatCount > 0) "本场已收 $chatCount 条" else "调节后立即生效",
+            style = MaterialTheme.typography.bodyMedium,
+            color = CinemaEmber.TextSecondary,
+            modifier = Modifier.padding(bottom = 8.dp),
+        )
+        DrawerRow(
+            label = if (enabled) "弹幕：开" else "弹幕：关",
+            onClick = onToggle,
+            modifier = Modifier.focusRequester(firstFocus),
+            emphasized = enabled,
+        )
+        DrawerRow(label = fontLabel, onClick = onCycleFont)
+        DrawerRow(label = opacityLabel, onClick = onCycleOpacity)
+        DrawerRow(label = speedLabel, onClick = onCycleSpeed)
+        Spacer(Modifier.weight(1f))
+        Text(
+            "屏蔽词 / 弹幕量档位 · 后续版本",
+            style = MaterialTheme.typography.bodyMedium,
+            color = CinemaEmber.TextDisabled,
+        )
+        DrawerRow(label = "关闭设置", onClick = onClose)
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun DrawerRow(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    emphasized: Boolean = false,
+) {
+    val shape = RoundedCornerShape(CinemaEmber.RadiusControl)
+    Surface(
+        onClick = onClick,
+        shape = ClickableSurfaceDefaults.shape(shape = shape),
+        scale = ClickableSurfaceDefaults.scale(
+            focusedScale = CinemaEmber.FocusScale,
+            pressedScale = CinemaEmber.PressScale,
+        ),
+        border = ClickableSurfaceDefaults.border(
+            focusedBorder = Border(
+                border = BorderStroke(CinemaEmber.FocusStroke, CinemaEmber.FocusRing),
+                shape = shape,
+            ),
+        ),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = if (emphasized) CinemaEmber.AccentMuted else CinemaEmber.BgElevated,
+            focusedContainerColor = CinemaEmber.BgSurfaceHover,
+        ),
+        modifier = modifier
+            .fillMaxWidth()
+            .height(64.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 20.dp),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            Text(
+                label,
+                style = MaterialTheme.typography.titleMedium,
+                color = CinemaEmber.TextPrimary,
+            )
         }
     }
 }
@@ -560,21 +706,32 @@ private fun ChromeButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val shape = RoundedCornerShape(CinemaEmber.RadiusControl)
     Surface(
         onClick = onClick,
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = Color.White.copy(alpha = 0.14f),
-            focusedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
-            pressedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.65f),
+        shape = ClickableSurfaceDefaults.shape(shape = shape),
+        scale = ClickableSurfaceDefaults.scale(
+            focusedScale = CinemaEmber.FocusScale,
+            pressedScale = CinemaEmber.PressScale,
         ),
-        modifier = modifier,
+        border = ClickableSurfaceDefaults.border(
+            focusedBorder = Border(
+                border = BorderStroke(CinemaEmber.FocusStroke, CinemaEmber.FocusRing),
+                shape = shape,
+            ),
+        ),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = CinemaEmber.BgSurface.copy(alpha = 0.9f),
+            focusedContainerColor = CinemaEmber.AccentMuted,
+            pressedContainerColor = CinemaEmber.Accent.copy(alpha = 0.45f),
+        ),
+        modifier = modifier.height(72.dp),
     ) {
         Text(
             text = label,
             modifier = Modifier.padding(horizontal = 22.dp, vertical = 12.dp),
             style = MaterialTheme.typography.labelLarge,
-            color = Color.White,
+            color = CinemaEmber.TextPrimary,
         )
     }
 }
@@ -597,11 +754,15 @@ private fun StatusPanel(
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(title, color = Color.White, style = MaterialTheme.typography.headlineSmall)
+            Text(
+                title,
+                color = CinemaEmber.TextPrimary,
+                style = MaterialTheme.typography.headlineSmall,
+            )
             Spacer(Modifier.height(12.dp))
             Text(
                 message,
-                color = Color.White.copy(alpha = 0.9f),
+                color = CinemaEmber.TextSecondary,
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.padding(horizontal = 32.dp),
             )

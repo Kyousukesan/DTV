@@ -1,5 +1,6 @@
 package com.dtv.androidtv.ui.browse
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,9 +15,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.unit.dp
@@ -41,10 +44,12 @@ import com.dtv.androidtv.ui.TvStatusBlock
 import com.dtv.androidtv.ui.components.CategoryChip
 import com.dtv.androidtv.ui.components.RoomRow
 import com.dtv.androidtv.ui.components.StreamerGrid
+import com.dtv.androidtv.ui.theme.CinemaEmber
 
 /**
- * TV home browse mirroring desktop [HomeScreen]:
- * platform → 关注/最近 → cate1+cate2 CategoryBar → StreamerGrid.
+ * Cinema Ember home: elevated platform tabs → 最近观看 → 关注 → categories → grid.
+ * Platform Tab ←→ moves focus only; OK confirms [BrowseViewModel.selectPlatform].
+ * Default focus: history first card when present (home.md).
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -59,6 +64,7 @@ fun BrowseScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
+    val historyFocus = remember { FocusRequester() }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -77,54 +83,43 @@ fun BrowseScreen(
         }
     }
 
+    // Cold start: prefer 最近观看 first card when history exists.
+    LaunchedEffect(state.loading, state.recent.size) {
+        if (!state.loading && state.recent.isNotEmpty()) {
+            runCatching { historyFocus.requestFocus() }
+        }
+    }
+
     TvScreenBackground {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(TvLayout.ScreenPadding),
         ) {
+            // Elevated top bar: platform tabs + utility actions.
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(CinemaEmber.BgElevated)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "DTV",
-                        style = MaterialTheme.typography.displaySmall,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    val subtitle = buildString {
-                        append(catalog.label(state.platform))
-                        if (state.selectedGroupName.isNotBlank()) {
-                            append(" · ").append(state.selectedGroupName)
-                        }
-                        if (state.selectedCategoryName.isNotBlank()) {
-                            append(" / ").append(state.selectedCategoryName)
-                        }
-                    }
-                    Text(
-                        text = subtitle,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),
-                        modifier = Modifier.padding(top = 4.dp),
-                    )
-                }
+                PlatformTabBar(
+                    selected = state.platform,
+                    focusedIndex = state.focusPlatform,
+                    onFocusedIndex = viewModel::setFocusPlatform,
+                    labelOf = catalog::label,
+                    onConfirm = { platform, index -> viewModel.selectPlatform(platform, index) },
+                    modifier = Modifier.weight(1f),
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    TvActionButton(label = "搜索", onClick = onOpenSearch, emphasized = true)
+                    TvActionButton(label = "搜索", onClick = onOpenSearch)
                     TvActionButton(label = "设置", onClick = onOpenSettings)
                 }
             }
 
             Spacer(Modifier.height(TvLayout.HeaderBottom))
-            PlatformRow(
-                selected = state.platform,
-                focusedIndex = state.focusPlatform,
-                onFocusedIndex = viewModel::setFocusPlatform,
-                labelOf = catalog::label,
-                onClick = { platform, index -> viewModel.selectPlatform(platform, index) },
-            )
-            Spacer(Modifier.height(12.dp))
 
             when {
                 state.loading && state.rooms.isEmpty() && state.follows.isEmpty() && state.recent.isEmpty() -> {
@@ -139,20 +134,7 @@ fun BrowseScreen(
                     )
                 }
                 else -> {
-                    // Compact library shelves (TV-only; desktop keeps these elsewhere).
-                    RoomRow(
-                        title = "关注",
-                        rooms = state.follows,
-                        focusedIndex = state.focusFollows,
-                        onFocusedIndex = viewModel::setFocusFollows,
-                        onOpenRoom = { room ->
-                            viewModel.openRoom(room)
-                            onOpenRoom(room)
-                        },
-                        emptyHint = "播放页选择「关注本房间」后会出现在这里",
-                        cardWidth = 200.dp,
-                    )
-                    Spacer(Modifier.height(TvLayout.RowSpacing))
+                    // History-first (design §3); empty shows secondary hint.
                     RoomRow(
                         title = "最近观看",
                         rooms = state.recent,
@@ -162,10 +144,31 @@ fun BrowseScreen(
                             viewModel.openRoom(room)
                             onOpenRoom(room)
                         },
-                        emptyHint = "打开过的直播间会出现在这里",
-                        cardWidth = 200.dp,
+                        emptyHint = "暂无观看记录",
+                        cardWidth = TvLayout.CardWidth,
+                        firstCardFocusRequester = if (state.recent.isNotEmpty()) {
+                            historyFocus
+                        } else {
+                            null
+                        },
                     )
                     Spacer(Modifier.height(TvLayout.RowSpacing))
+
+                    // Keep working follow shelf (V1 design omits it; product still has it).
+                    if (state.follows.isNotEmpty()) {
+                        RoomRow(
+                            title = "关注",
+                            rooms = state.follows,
+                            focusedIndex = state.focusFollows,
+                            onFocusedIndex = viewModel::setFocusFollows,
+                            onOpenRoom = { room ->
+                                viewModel.openRoom(room)
+                                onOpenRoom(room)
+                            },
+                            cardWidth = TvLayout.CardWidthCompact,
+                        )
+                        Spacer(Modifier.height(TvLayout.RowSpacing))
+                    }
 
                     CategoryBar(
                         groups = state.groups,
@@ -181,21 +184,21 @@ fun BrowseScreen(
                             viewModel.selectCategory(category, index)
                         },
                     )
-                    Spacer(Modifier.height(10.dp))
+                    Spacer(Modifier.height(12.dp))
 
                     when {
                         state.loading && state.rooms.isEmpty() -> {
                             Text(
                                 "加载分区直播…",
                                 style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                                color = CinemaEmber.TextSecondary,
                             )
                         }
                         else -> {
                             Text(
                                 text = "直播 · ${state.selectedCategoryName.ifBlank { "全部" }}",
                                 style = MaterialTheme.typography.titleLarge,
-                                color = MaterialTheme.colorScheme.onBackground,
+                                color = CinemaEmber.TextPrimary,
                                 modifier = Modifier.padding(bottom = TvLayout.SectionTitleBottom),
                             )
                             StreamerGrid(
@@ -225,40 +228,39 @@ fun BrowseScreen(
 /** Desktop StreamerGrid density target for 1080p TV. */
 private const val GRID_COLUMNS = 4
 
+/**
+ * Top platform tabs. Focus moves with ←→; content switches only on OK ([onConfirm]).
+ */
 @OptIn(ExperimentalTvMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
-@Suppress("UNUSED_PARAMETER")
-private fun PlatformRow(
+private fun PlatformTabBar(
     selected: LivePlatform,
     focusedIndex: Int,
     onFocusedIndex: (Int) -> Unit,
     labelOf: (LivePlatform) -> String,
-    onClick: (LivePlatform, Int) -> Unit,
+    onConfirm: (LivePlatform, Int) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Text(
-            text = "平台",
-            style = MaterialTheme.typography.titleLarge,
-            modifier = Modifier.padding(bottom = TvLayout.SectionTitleBottom),
-        )
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = TvLayout.RowContentPadding,
-            modifier = Modifier.focusRestorer(),
-        ) {
-            itemsIndexed(LivePlatform.entries, key = { _, p -> p.id }) { index, platform ->
-                CategoryChip(
-                    label = labelOf(platform),
-                    selected = platform == selected,
-                    onClick = {
-                        onFocusedIndex(index)
-                        onClick(platform, index)
-                    },
-                    modifier = Modifier.onFocusChanged { focus ->
-                        if (focus.isFocused) onFocusedIndex(index)
-                    },
-                )
-            }
+    // focusedIndex kept for ViewModel symmetry / future focusRestorer restore.
+    @Suppress("UNUSED_PARAMETER")
+    val _focused = focusedIndex
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = TvLayout.RowContentPadding,
+        modifier = modifier.focusRestorer(),
+    ) {
+        itemsIndexed(LivePlatform.entries, key = { _, p -> p.id }) { index, platform ->
+            CategoryChip(
+                label = labelOf(platform),
+                selected = platform == selected,
+                onClick = {
+                    onFocusedIndex(index)
+                    onConfirm(platform, index)
+                },
+                modifier = Modifier.onFocusChanged { focus ->
+                    if (focus.isFocused) onFocusedIndex(index)
+                },
+            )
         }
     }
 }
@@ -287,6 +289,7 @@ private fun CategoryBar(
         Text(
             text = "一级分区",
             style = MaterialTheme.typography.titleLarge,
+            color = CinemaEmber.TextPrimary,
             modifier = Modifier.padding(bottom = TvLayout.SectionTitleBottom),
         )
         LazyRow(
@@ -314,6 +317,7 @@ private fun CategoryBar(
             Text(
                 text = "二级分区",
                 style = MaterialTheme.typography.titleLarge,
+                color = CinemaEmber.TextPrimary,
                 modifier = Modifier.padding(bottom = TvLayout.SectionTitleBottom),
             )
             LazyRow(

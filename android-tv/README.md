@@ -71,7 +71,7 @@ Gradle 输出：`app/build/outputs/apk/debug/app-debug.apk`（`applicationId` �
 
 `dist/dtv-tv-debug-<versionName>.apk`
 
-当前 debug：`dist/dtv-tv-debug-0.2.0-lt22-debug.apk`（`versionName` = `0.2.0-lt22` + `-debug`）。
+当前 debug：`dist/dtv-tv-debug-0.2.0-lt23-debug.apk`（`versionName` = `0.2.0-lt23` + `-debug`）。
 
 Release：
 
